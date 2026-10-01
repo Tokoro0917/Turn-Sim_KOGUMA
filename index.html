@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ターンシミュレーター</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --sub: #5d6676; --line: #dde1e8;
+  --accent: #2563eb; --accent-ink: #ffffff; --accent-soft: #e6eefe;
+  --ok: #15803d; --ok-soft: #e3f5e9; --warn: #b45309; --warn-soft: #fdf1df; --bad: #b91c1c; --bad-soft: #fde8e8;
+  --grid: #e7eaf0; --post: #8b93a3; --ideal: #2563eb; --sim0: #9aa3b2; --sim: #dc2626;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12151b; --panel: #1b2029; --ink: #e6e9ef; --sub: #9aa3b2; --line: #2c3340;
+    --accent: #6b9cff; --accent-ink: #0d1220; --accent-soft: #1f2c48;
+    --ok: #4ade80; --ok-soft: #173325; --warn: #fbbf24; --warn-soft: #3a2c12; --bad: #f87171; --bad-soft: #3d1b1b;
+    --grid: #262c37; --post: #6b7383; --ideal: #6b9cff; --sim0: #6b7383; --sim: #f87171;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12151b; --panel: #1b2029; --ink: #e6e9ef; --sub: #9aa3b2; --line: #2c3340;
+  --accent: #6b9cff; --accent-ink: #0d1220; --accent-soft: #1f2c48;
+  --ok: #4ade80; --ok-soft: #173325; --warn: #fbbf24; --warn-soft: #3a2c12; --bad: #f87171; --bad-soft: #3d1b1b;
+  --grid: #262c37; --post: #6b7383; --ideal: #6b9cff; --sim0: #6b7383; --sim: #f87171;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.6 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+  padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+header h1 { font-size: 18px; margin: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: transparent; color: var(--ink); padding: 6px 14px; }
+.seg button.on { background: var(--accent); color: var(--accent-ink); }
+.tools { display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  padding: 6px 12px; border-radius: 8px; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.small { padding: 2px 8px; font-size: 13px; }
+.layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 20px; padding: 20px; max-width: 1400px; margin: 0 auto; }
+nav ol { list-style: none; margin: 0; padding: 0; position: sticky; top: 80px; }
+nav li { margin: 0 0 4px; }
+nav a { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; color: var(--ink); text-decoration: none; }
+nav a:hover { background: var(--accent-soft); }
+nav a.on { background: var(--accent-soft); font-weight: 600; }
+nav .num { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; border: 1px solid var(--line); background: var(--panel); }
+nav a.done .num { background: var(--ok); color: var(--panel); border-color: var(--ok); }
+nav a.on .num { border-color: var(--accent); color: var(--accent); }
+nav a.done.on .num { color: var(--panel); }
+nav .where { font-size: 11px; color: var(--sub); display: block; line-height: 1.2; }
+main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+.card h2 { margin: 0 0 4px; font-size: 18px; }
+.card h3 { margin: 18px 0 6px; font-size: 15px; }
+.tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; margin-right: 6px; vertical-align: 2px; }
+.tag.sim { background: var(--accent-soft); color: var(--accent); }
+.tag.real { background: var(--warn-soft); color: var(--warn); }
+.lead { color: var(--sub); margin: 4px 0 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: end; margin: 10px 0; }
+label.f { display: flex; flex-direction: column; font-size: 13px; color: var(--sub); }
+label.f input, label.f select { margin-top: 2px; }
+input, select, textarea { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 8px; }
+input[type=number] { width: 110px; }
+textarea { width: 100%; min-height: 110px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+.note { font-size: 13px; color: var(--sub); }
+.box { border-radius: 8px; padding: 10px 12px; margin: 10px 0; font-size: 14px; }
+.box.ok { background: var(--ok-soft); color: var(--ok); }
+.box.warn { background: var(--warn-soft); color: var(--warn); }
+.box.bad { background: var(--bad-soft); color: var(--bad); }
+.box.info { background: var(--accent-soft); color: var(--ink); }
+.steps-actions { display: flex; justify-content: space-between; margin-top: 18px; gap: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { border-bottom: 1px solid var(--line); padding: 5px 6px; text-align: right; white-space: nowrap; }
+th { color: var(--sub); font-weight: 500; }
+th:first-child, td:first-child { text-align: left; }
+tr.sel td { background: var(--accent-soft); }
+td input[type=number] { width: 78px; padding: 2px 4px; }
+.tablewrap { overflow-x: auto; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; font-size: 14px; }
+.kv span:nth-child(odd) { color: var(--sub); }
+.plotcard { position: sticky; top: 80px; }
+.plothead { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+svg.plot { width: 100%; height: auto; display: block; margin-top: 8px; background: var(--bg); border-radius: 8px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--sub); margin-top: 6px; }
+.legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.metric { background: var(--bg); border-radius: 8px; padding: 8px 10px; }
+.metric b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+.metric span { font-size: 12px; color: var(--sub); }
+ul.check { list-style: none; padding: 0; margin: 6px 0; }
+ul.check li { margin: 4px 0; }
+.path { font-size: 13px; background: var(--bg); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+.path b { color: var(--accent); }
+@media (max-width: 1100px) { .top { grid-template-columns: minmax(0, 1fr); } .plotcard { position: static; } }
+@media (max-width: 760px) {
+  .layout { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; }
+  nav ol { position: static; display: flex; overflow-x: auto; gap: 4px; }
+  nav li { flex: none; }
+  nav .label { display: none; }
+  header { padding: 10px 16px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>ターンシミュレーター</h1>
+  <div class="seg" id="sizeSeg" role="group" aria-label="機体のサイズ">
+    <button data-size="classic">クラシック (区画180mm)</button>
+    <button data-size="half">ハーフ (区画90mm)</button>
+  </div>
+  <div class="tools">
+    <button id="btnExportC">Cの表をコピー</button>
+    <button id="btnExportJson">保存 (JSON)</button>
+    <button id="btnImportJson">読み込み</button>
+    <input type="file" id="fileImport" accept="application/json" hidden>
+    <button id="btnReset">初期値に戻す</button>
+  </div>
+</header>
+
+<div class="layout">
+  <nav><ol id="stepNav"></ol></nav>
+  <main>
+   <div class="top">
+    <section class="card" id="stepCard"></section>
+    <section class="card plotcard">
+      <div class="plothead">
+        <h2 id="plotTitle">軌跡</h2>
+        <select id="plotTurn" aria-label="表示するターン"></select>
+      </div>
+      <svg class="plot" id="plot" viewBox="0 0 400 400" role="img" aria-label="ターンの軌跡"></svg>
+      <div class="legend">
+        <span><i style="border-color:var(--ideal);border-top-style:dashed"></i>理想の入口・出口の線</span>
+        <span><i style="border-color:var(--sim0)"></i>滑りなし (k=0)</span>
+        <span><i style="border-color:var(--sim)"></i>滑りあり (今の k)</span>
+        <span>■ 柱</span>
+      </div>
+      <div class="metrics" id="metrics"></div>
+    </section>
+   </div>
+    <section class="card">
+      <h2>ターン一覧</h2>
+      <p class="lead">シミュレーターが使っている今のパラメータ。直接書き換えてもよい。行を押すと右上に軌跡を表示する。
+        前・後は「理想のターン開始点から曲がり始めるまで」「曲がり終わってから理想の終了点まで」の距離 [mm]。</p>
+      <div class="tablewrap"><table id="turnTable"></table></div>
+    </section>
+  </main>
+</div>
+
+<script src="turnsim.js"></script>
+<script>
+(function () {
+  'use strict';
+  var T = window.TurnSim;
+  var STORE = 'turnsim.v1';
+
+  /* ---------- 初期値 ---------- */
+  // 曲がり始めの下限(壁切れを検出する位置)の目安。KOGUMA(クラシック)の調整結果から逆算した値。
+  var MIN_ST_CLASSIC = { in45: 37, in135: 37, big90: 37, big180: 37, out45: 25, out135: 7, v90: 30 };
+
+  function defaults(size) {
+    var C = T.SIZES[size].cell, s = C / 180;
+    var v = size === 'classic' ? 2000 : 1300;
+    var m = {
+      k: 0, wacMax: size === 'classic' ? 130000 : 250000, minEnd: 5 * s, testLen: 4 * C * Math.SQRT1_2,
+      tol: 3, turns: {}, done: {}, measure: {}, fitTurn: 'in45', fixTurn: 'in45', repeat: '', checks: {}
+    };
+    T.TURNS.forEach(function (t) {
+      var minSt = MIN_ST_CLASSIC[t] * s;
+      var c = { v: v, k: 0, minSt: minSt, minEnd: m.minEnd, wacMax: m.wacMax };
+      var b = T.design(t, C, c) || { v: v, wMax: 1000, wAc: 50000, st: minSt, end: m.minEnd };
+      m.turns[t] = { v: v, wMax: b.wMax, wAc: b.wAc, st: b.st, end: b.end, minSt: minSt };
+    });
+    return m;
+  }
+
+  var state;
+  function load() {
+    try { state = JSON.parse(localStorage.getItem(STORE)); } catch (e) { state = null; }
+    if (!state || !state.machines) state = { size: 'classic', step: 0, machines: {} };
+    if (!state.machines[state.size]) state.machines[state.size] = defaults(state.size);
+  }
+  function save() {
+    try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) { /* 保存できない環境 */ }
+  }
+  function M() { return state.machines[state.size]; }
+  function C() { return T.SIZES[state.size].cell; }
+
+  /* ---------- 小物 ---------- */
+  function $(id) { return document.getElementById(id); }
+  function fx(x, d) { return (x == null || isNaN(x)) ? '-' : Number(x).toFixed(d == null ? 1 : d); }
+  function sg(x, d) { return (x >= 0 ? '+' : '') + fx(x, d); }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function name(t) { return T.TURN_NAMES[t]; }
+  function num(id, def) { var v = parseFloat($(id).value); return isNaN(v) ? def : v; }
+  function turnOptions(sel) {
+    return T.TURNS.map(function (t) { return '<option value="' + t + '"' + (t === sel ? ' selected' : '') + '>' + name(t) + '</option>'; }).join('');
+  }
+  function evalTurn(t, k) { return T.evaluate(t, C(), M().turns[t], k == null ? M().k : k, { dt: 5e-5 }); }
+  function designTurn(t, extra) {
+    var m = M(), p = m.turns[t];
+    var c = { v: p.v, k: m.k, minSt: p.minSt, minEnd: m.minEnd, wacMax: m.wacMax };
+    for (var key in extra) c[key] = extra[key];
+    return T.design(t, C(), c);
+  }
+  function applyDesign(t, b) {
+    var p = M().turns[t];
+    p.wMax = b.wMax; p.wAc = b.wAc; p.st = b.st; p.end = b.end;
+  }
+  function paramsKV(t) {
+    var p = M().turns[t], r = evalTurn(t);
+    return '<div class="kv">' +
+      '<span>速度</span><span>' + fx(p.v, 0) + ' mm/s</span>' +
+      '<span>最大角速度</span><span>' + fx(p.wMax, 0) + ' deg/s (実際のピーク ' + fx(r.peak, 0) + ')</span>' +
+      '<span>角加速度</span><span>' + fx(p.wAc, 0) + ' deg/s²</span>' +
+      '<span>前 / 後</span><span>' + fx(p.st) + ' / ' + fx(p.end) + ' mm</span>' +
+      '<span>ピーク横加速度</span><span>' + fx(r.aLat) + ' m/s²</span>' +
+      '</div>';
+  }
+  function noDesignBox(t) {
+    var p = M().turns[t];
+    return '<div class="box bad">' + name(t) + ' の条件を満たすパラメータが見つからない。曲がり始めの下限 ' + fx(p.minSt) +
+      ' mm から曲がり始めて、角加速度 ' + fx(M().wacMax, 0) + ' deg/s² 以下では理想の線に乗れない。' +
+      '手順1で角加速度の上限を上げる(モーターが出せるか確認)か、速度を下げる。' +
+      '<div class="row"><button data-maxv="' + t + '">この条件で出せる一番速い速度を探す</button></div></div>';
+  }
+  /* 作れる速度まで 50mm/s ずつ下げて探す */
+  function findMaxSpeed(t) {
+    var p = M().turns[t];
+    for (var v = Math.floor((p.v - 1) / 50) * 50; v >= 200; v -= 50) {
+      var b = designTurn(t, { v: v });
+      if (b) { p.v = v; applyDesign(t, b); return v; }
+    }
+    return null;
+  }
+
+  /* ---------- 手順 ---------- */
+  var STEPS = [
+    { title: '機体の設定', where: '準備', render: stepSetup },
+    { title: '斜め入り45を作る', where: 'シミュレーター', render: stepDesign45 },
+    { title: '停止位置テスト', where: '実機', render: stepStopTest },
+    { title: 'スリップ係数 k を合わせる', where: 'シミュレーター', render: stepFit },
+    { title: '斜め入り45を作り直す', where: 'シミュレーター', render: stepRedesign },
+    { title: '前後の距離を合わせる', where: '実機', render: stepFix },
+    { title: 'ログとばらつきの確認', where: '実機', render: stepRepeat },
+    { title: '他のターンを作る', where: 'シミュレーター', render: stepOthers },
+    { title: 'V90の連続テスト', where: '実機', render: stepV90 }
+  ];
+
+  function stepSetup() {
+    var m = M(), C0 = C();
+    var rows = T.TURNS.map(function (t) {
+      return '<tr><td>' + name(t) + '</td><td><input type="number" step="1" data-minst="' + t + '" value="' + fx(m.turns[t].minSt) + '"></td>' +
+        '<td class="note" style="text-align:left">' + (/^(out|v90)/.test(t) ? '斜めの壁の中点から' : '区画の中心から') + '</td></tr>';
+    }).join('');
+    return head('準備', '機体の設定', '迷路のサイズと、機体の限界を入れる。ここで入れた条件の中でシミュレーターがパラメータを探す。') +
+      '<div class="row">' +
+      '<label class="f">目標速度 (全ターン) [mm/s]<input type="number" id="inV" step="50" value="' + fx(m.turns.in45.v, 0) + '"></label>' +
+      '<label class="f">角加速度の上限 [deg/s²]<input type="number" id="inWac" step="5000" value="' + fx(m.wacMax, 0) + '"></label>' +
+      '<label class="f">後オフセットの下限 [mm]<input type="number" id="inMinEnd" step="1" value="' + fx(m.minEnd) + '"></label>' +
+      '<label class="f">k の初期値 [deg/(m/s²)]<input type="number" id="inK" step="0.01" value="' + fx(m.k, 3) + '"></label>' +
+      '</div>' +
+      '<p class="note">目標速度の目安(記事より): ハーフ・吸引ありで 1.3〜1.4 m/s。クラシックは機体による。' +
+      ' 角加速度の上限はモーターのトルクで決まる。わからなければ今調整済みのターンで使っている最大値を入れる。' +
+      ' k は分からなければ 0 のままでよい(手順4で実測から求める)。</p>' +
+      '<h3>曲がり始めの下限 [mm]</h3>' +
+      '<p class="note">理想のターン開始点から、実際に曲がり始められる一番手前の位置。壁切れを検出してから曲がる場合は、その検出位置を入れる。' +
+      ' 初期値は KOGUMA(クラシック)の調整結果から逆算した目安(ハーフは半分)なので、自分の機体の値に置き換える。</p>' +
+      '<div class="tablewrap"><table><tr><th>ターン</th><th>下限 [mm]</th><th style="text-align:left">開始点</th></tr>' + rows + '</table></div>' +
+      '<div class="row"><button class="primary" id="btnSetup">この設定で全ターンを作り直す</button></div>' +
+      '<p class="note">区画 ' + C0 + ' mm。設定はサイズごとに別々に保存される。</p>' +
+      nextPrev();
+  }
+  function bindSetup() {
+    $('btnSetup').onclick = function () {
+      var m = M(), v = num('inV', 1000);
+      m.wacMax = num('inWac', m.wacMax); m.minEnd = num('inMinEnd', m.minEnd); m.k = num('inK', m.k);
+      document.querySelectorAll('[data-minst]').forEach(function (el) {
+        var t = el.getAttribute('data-minst'); var x = parseFloat(el.value);
+        if (!isNaN(x)) m.turns[t].minSt = x;
+      });
+      var bad = [];
+      T.TURNS.forEach(function (t) {
+        m.turns[t].v = v;
+        var b = designTurn(t);
+        if (b) applyDesign(t, b); else bad.push(name(t));
+      });
+      m.done[0] = true;
+      flash(bad.length ? '作れなかったターン: ' + bad.join('、') + '(角加速度の上限か速度を見直す)' : '全ターンを作り直した', !bad.length);
+      save(); render();
+    };
+  }
+
+  function stepDesign45() {
+    var m = M(), t = 'in45';
+    return head('sim', '斜め入り45を作る',
+      '一番曲がりにくいターンから合わせる。曲がりにくさは V90 ≧ 斜め入り45 ≫ 斜め入り135 ≫ その他。' +
+      '斜め入り45 が曲がれれば V90 も曲がれる可能性が高く、他のターンはまず曲がれる。') +
+      '<div class="row"><label class="f">斜め入り45 の速度 [mm/s]<input type="number" id="inV45" step="50" value="' + fx(m.turns[t].v, 0) + '"></label>' +
+      '<button class="primary" id="btnD45">シミュレーターで作る</button></div>' +
+      '<div id="d45res">' + paramsKV(t) + '</div>' +
+      '<p class="note">今の k (' + fx(m.k, 3) + ') で、横加速度が一番小さくなる角速度・角加速度と前後の距離を探す。' +
+      ' 結果を機体のパラメータに書き写してから次へ進む。</p>' + nextPrev();
+  }
+  function bindDesign45() {
+    $('btnD45').onclick = function () {
+      var m = M(); m.turns.in45.v = num('inV45', m.turns.in45.v);
+      var b = designTurn('in45');
+      if (!b) { $('d45res').innerHTML = noDesignBox('in45'); bindCommon(); return; }
+      applyDesign('in45', b); m.done[1] = true; save(); render();
+    };
+  }
+
+  function stopTestPath(t) {
+    var g = T.geometry(t, C());
+    var into = /^(in|v90)/.test(t) ? '斜め直線' : '直線';
+    return '<div class="path">加速の直線 → <b>' + name(t) + '</b> → ' + into + ' ' + fx(M().testLen, 0) + ' mm で減速して停止</div>';
+  }
+  function measureInputs(prefix, mm) {
+    mm = mm || {};
+    return '<div class="row">' +
+      '<label class="f">前後のずれ [mm] (行き過ぎが+)<input type="number" step="0.5" id="' + prefix + 'Along" value="' + (mm.along == null ? '' : mm.along) + '"></label>' +
+      '<label class="f">横のずれ [mm] (内側が+ / 外側が−)<input type="number" step="0.5" id="' + prefix + 'Lat" value="' + (mm.lat == null ? '' : mm.lat) + '"></label>' +
+      '</div>' +
+      '<p class="note">ずれは「シミュレーターが滑りなしで予想した停止位置」ではなく「理想の停止位置(理想の出口の線上で、直線の長さ分進んだ点)」からの、' +
+      '出口の向きで見た値。内側 = 曲がった側(左ターンなら左)。外側に膨らんだら横はマイナス。</p>';
+  }
+
+  function stepStopTest() {
+    var m = M(), t = m.fitTurn;
+    var r = evalTurn(t);
+    return head('real', '停止位置テスト',
+      'ターンの誤差は後ろの直線で引き伸ばされて停止位置に出る。カメラがなくても定規で測れる。') +
+      '<div class="row"><label class="f">テストするターン<select id="inFitTurn">' + turnOptions(t) + '</select></label>' +
+      '<label class="f">後ろの直線の長さ [mm]<input type="number" id="inTestLen" step="10" value="' + fx(m.testLen, 0) + '"></label></div>' +
+      stopTestPath(t) +
+      '<ul class="check"><li>手順2のパラメータを機体に書き込む</li>' +
+      '<li><b>後ろの直線の壁制御を切る</b>(効いていると横ずれが補正されて見えなくなる)</li>' +
+      '<li>停止位置を、理想の停止位置からのずれとして測る</li></ul>' +
+      '<div class="box info">シミュレーターの予想(今の k = ' + fx(m.k, 3) + '): 前後 ' + sg(r.along) + ' mm、横 ' + sg(r.lat) + ' mm</div>' +
+      measureInputs('st', m.measure[t]) +
+      '<div class="row"><button class="primary" id="btnStopSave">測定値を記録</button></div>' + nextPrev();
+  }
+  function bindStopTest() {
+    $('inFitTurn').onchange = function () { M().fitTurn = this.value; state.plotTurn = this.value; save(); render(); };
+    $('btnStopSave').onclick = function () {
+      var m = M(), t = m.fitTurn;
+      m.testLen = num('inTestLen', m.testLen);
+      var a = parseFloat($('stAlong').value), l = parseFloat($('stLat').value);
+      if (isNaN(l)) { flash('横のずれを入れる', false); return; }
+      m.measure[t] = { along: isNaN(a) ? null : a, lat: l };
+      m.done[2] = true; goStep(3);
+    };
+  }
+
+  function stepFit() {
+    var m = M(), t = m.fitTurn, meas = m.measure[t];
+    var body;
+    if (!meas) {
+      body = '<div class="box warn">' + name(t) + ' の停止位置の測定値がない。手順3で記録する。</div>';
+    } else {
+      var k = T.fitK(t, C(), m.turns[t], meas.lat);
+      var r0 = evalTurn(t, 0);
+      body = '<div class="kv"><span>測った横ずれ</span><span>' + sg(meas.lat) + ' mm</span>' +
+        '<span>滑りなしの予想</span><span>' + sg(r0.lat) + ' mm</span>' +
+        '<span>合う k</span><span>' + (k == null ? '見つからない' : fx(k, 4) + ' deg/(m/s²)') + '</span></div>';
+      if (k == null) {
+        body += '<div class="box bad">k をどう変えても測定値に届かない。滑りなしの予想より内側にずれている場合は、滑り以外の原因(角度の追従不足、壁切れの位置ずれなど)を疑う。</div>';
+      } else {
+        body += '<div class="row"><button class="primary" id="btnFit" data-k="' + k + '">k = ' + fx(k, 4) + ' を使う</button></div>';
+      }
+    }
+    return head('sim', 'スリップ係数 k を合わせる',
+      'スリップ角は遠心力(m·v·ω)に比例すると仮定し、β[deg] = k × 横加速度[m/s²] とする。実測の横ずれとシミュレーションが合う k を探す。') +
+      '<p class="note">対象: ' + name(t) + '(手順3で選んだターン)。今の k = ' + fx(m.k, 4) + '</p>' + body + nextPrev();
+  }
+  function bindFit() {
+    var b = $('btnFit');
+    if (b) b.onclick = function () { M().k = parseFloat(this.getAttribute('data-k')); M().done[3] = true; goStep(4); };
+  }
+
+  function stepRedesign() {
+    var m = M(), t = 'in45';
+    return head('sim', '斜め入り45を作り直す', '求めた k でもう一度パラメータを探し、シミュレーター上で理想の停止位置に来るようにする。') +
+      '<p class="note">今の k = ' + fx(m.k, 4) + '</p>' +
+      '<div class="row"><button class="primary" id="btnRe45">k を入れて作り直す</button></div>' +
+      '<div id="re45res">' + paramsKV(t) + '</div>' + nextPrev();
+  }
+  function bindRedesign() {
+    $('btnRe45').onclick = function () {
+      var b = designTurn('in45');
+      if (!b) { $('re45res').innerHTML = noDesignBox('in45'); bindCommon(); return; }
+      applyDesign('in45', b); M().done[4] = true; save(); render();
+    };
+  }
+
+  function stepFix() {
+    var m = M(), t = m.fixTurn, p = m.turns[t];
+    return head('real', '前後の距離を合わせる',
+      '新しいパラメータで停止位置テストをもう一度走らせ、まだ残るずれをターンの前後の距離で消す。') +
+      '<div class="row"><label class="f">ターン<select id="inFixTurn">' + turnOptions(t) + '</select></label></div>' +
+      stopTestPath(t) + measureInputs('fx', null) +
+      '<div class="row"><button class="primary" id="btnFixCalc">前後の距離を計算</button></div>' +
+      '<div id="fixres"></div>' +
+      '<p class="note">前を変えると入口の向きに、後を変えると出口の向きに終点が動く。2つを組み合わせて前後・横の両方を消す' +
+      '(180度だけは2つが平行なので横は直せない。横は角速度で合わせる)。' +
+      ' 機体側でオフセットを壁切れ込みで持っている場合は、表示される「変化量」を足す。</p>' + nextPrev();
+  }
+  function bindFix() {
+    $('inFixTurn').onchange = function () { M().fixTurn = this.value; state.plotTurn = this.value; save(); render(); };
+    $('btnFixCalc').onclick = function () {
+      var m = M(), t = m.fixTurn, p = m.turns[t];
+      var a = parseFloat($('fxAlong').value) || 0, l = parseFloat($('fxLat').value) || 0;
+      var q = T.correctOffsets(t, C(), p, a, l);
+      var html = '<div class="kv"><span>前</span><span>' + fx(p.st) + ' → <b>' + fx(q.st) + '</b> mm (変化量 ' + sg(q.st - p.st) + ')</span>' +
+        '<span>後</span><span>' + fx(p.end) + ' → <b>' + fx(q.end) + '</b> mm (変化量 ' + sg(q.end - p.end) + ')</span></div>';
+      if (q.latLeft) html += '<div class="box warn">横のずれ ' + sg(q.latLeft) + ' mm は前後の距離では直せない。角速度を調整する。</div>';
+      if (q.st < 0 || q.end < 0) html += '<div class="box bad">距離が負になる。このずれは前後の距離では吸収できないので、手順5(または8)で角速度・角加速度から作り直す。</div>';
+      else if (q.st < p.minSt) html += '<div class="box warn">前が曲がり始めの下限 (' + fx(p.minSt) + ' mm) より手前になる。壁切れで曲がり始める機体では実現できない。</div>';
+      html += '<div class="row"><button class="primary" id="btnFixApply">この値にする</button></div>';
+      $('fixres').innerHTML = html;
+      $('btnFixApply').onclick = function () { p.st = q.st; p.end = q.end; m.done[5] = true; save(); render(); };
+    };
+  }
+
+  function stepRepeat() {
+    var m = M(), ck = m.checks;
+    var items = [
+      ['w', '角速度が目標に追従している'],
+      ['wac', '角加速度が目標に追従している'],
+      ['sat', 'モーターへの制御量が 100% に張り付いていない']
+    ];
+    var list = items.map(function (it) {
+      return '<li><label><input type="checkbox" data-ck="' + it[0] + '"' + (ck[it[0]] ? ' checked' : '') + '> ' + it[1] + '</label></li>';
+    }).join('');
+    var allOk = items.every(function (it) { return ck[it[0]]; });
+    var res = repeatResult().html;
+    return head('real', 'ログとばらつきの確認', '走行ログで追従を確かめ、何度か走らせて停止位置のばらつきを見る。') +
+      '<h3>走行ログ</h3><ul class="check">' + list + '</ul>' +
+      (allOk ? '' : '<div class="box warn">ゲインを調整しても追従しない、または制御量が 100% に張り付くなら、その速度は機体として出せない。' +
+        '<div class="row"><button id="btnSlower">斜め入り45 を 5% 遅くして手順2からやり直す</button></div></div>') +
+      '<h3>停止位置のばらつき</h3>' +
+      '<p class="note">1回ごとに「前後 横」を1行で入れる(例: <code>1.5 -2</code>)。</p>' +
+      '<textarea id="inRepeat" placeholder="1.5 -2&#10;0.5 -1&#10;2 -3">' + esc(m.repeat || '') + '</textarea>' +
+      '<div class="row"><label class="f">許容範囲 ± [mm]<input type="number" id="inTol" step="0.5" value="' + fx(m.tol) + '"></label>' +
+      '<button class="primary" id="btnRepeat">判定</button></div>' +
+      '<div id="repres">' + res + '</div>' + nextPrev();
+  }
+  function repeatResult() {
+    var m = M(), lines = (m.repeat || '').split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+    if (!lines.length) return { html: '', ok: false };
+    var A = [], L = [];
+    lines.forEach(function (s) {
+      var v = s.split(/[\s,]+/).map(parseFloat);
+      if (!isNaN(v[0])) A.push(v[0]);
+      if (!isNaN(v[1])) L.push(v[1]);
+    });
+    var sa = T.stats(A), sl = T.stats(L);
+    function row(lbl, s) {
+      if (!s) return '';
+      return '<span>' + lbl + '</span><span>平均 ' + sg(s.mean) + '、ばらつき(標準偏差) ' + fx(s.sd) + '、幅 ' + fx(s.min) + '〜' + fx(s.max) + ' mm</span>';
+    }
+    var half = Math.max(sa ? (sa.max - sa.min) / 2 : 0, sl ? (sl.max - sl.min) / 2 : 0);
+    var ok = half <= m.tol;
+    return { ok: ok, html: '<div class="kv"><span>回数</span><span>' + lines.length + '</span>' + row('前後', sa) + row('横', sl) + '</div>' +
+      (ok ? '<div class="box ok">平均のまわり ±' + fx(half) + ' mm に収まっている。' +
+        (sa || sl ? ' 平均のずれが残っているなら手順6で前後の距離を合わせる。' : '') + '</div>'
+        : '<div class="box bad">ばらつきが ±' + fx(half) + ' mm あり、許容範囲を超える。タイヤが不規則に滑っている可能性が高い。' +
+          '<div class="row"><button id="btnAlt">別の角速度・角加速度の組み合わせを探す</button></div></div>') };
+  }
+  function bindRepeat() {
+    document.querySelectorAll('[data-ck]').forEach(function (el) {
+      el.onchange = function () { M().checks[el.getAttribute('data-ck')] = el.checked; save(); render(); };
+    });
+    var sl = $('btnSlower');
+    if (sl) sl.onclick = function () { var p = M().turns.in45; p.v = Math.round(p.v * 0.95 / 10) * 10; M().checks = {}; goStep(1); };
+    $('btnRepeat').onclick = function () {
+      var m = M(); m.repeat = $('inRepeat').value; m.tol = num('inTol', m.tol);
+      if (repeatResult().ok) m.done[6] = true;
+      save(); render();
+    };
+    var alt = $('btnAlt');
+    if (alt) alt.onclick = function () {
+      // 角加速度を下げて、より滑らかな(ピーク角速度の高い)組み合わせを探す
+      var t = M().fixTurn, p = M().turns[t];
+      var b = designTurn(t, { wacMax: Math.max(5000, Math.floor(p.wAc * 0.8 / 5000) * 5000) });
+      if (!b) { flash('角加速度を下げると条件を満たさない。速度を下げる', false); return; }
+      applyDesign(t, b); M().repeat = ''; M().fitTurn = t;
+      flash(name(t) + ' を角加速度 ' + fx(b.wAc, 0) + ' で作り直した。停止位置を測り直す', true);
+      goStep(2);
+    };
+  }
+
+  function stepOthers() {
+    var m = M();
+    var order = ['out45', 'in135', 'out135', 'big90', 'big180', 'v90'];
+    var rows = order.map(function (t) {
+      var p = m.turns[t], r = evalTurn(t);
+      return '<tr><td>' + name(t) + '</td><td><input type="number" step="50" data-ov="' + t + '" value="' + fx(p.v, 0) + '"></td>' +
+        '<td>' + fx(r.aLat) + '</td><td>' + fx(p.wMax, 0) + '</td><td>' + fx(p.wAc, 0) + '</td><td>' + fx(p.st) + '</td><td>' + fx(p.end) + '</td></tr>';
+    }).join('');
+    return head('sim', '他のターンを作る',
+      '合わせた k を使って、残りのターンをシミュレーター上で作る。実機で全部を合わせ直す必要はない。') +
+      '<p class="note">今の k = ' + fx(m.k, 4) + '。速度はターンごとに変えてよい(半径の大きいターンは速くできる)。</p>' +
+      '<div class="tablewrap"><table><tr><th>ターン</th><th>速度</th><th>横加速度 [m/s²]</th><th>ω</th><th>ω̇</th><th>前</th><th>後</th></tr>' + rows + '</table></div>' +
+      '<div class="row"><button class="primary" id="btnOthers">この速度で全部作る</button></div>' +
+      '<ul class="check"><li>記事の順番: 斜め出45 → 大回り90・180 → 斜め入り135 → 斜め出135 → V90</li>' +
+      '<li>斜め入り135 は実機で停止位置テストをして(手順3〜6をこのターンで)合わせてから、斜め出135 を作り直すとよい</li></ul>' + nextPrev();
+  }
+  function bindOthers() {
+    $('btnOthers').onclick = function () {
+      var m = M(), bad = [];
+      document.querySelectorAll('[data-ov]').forEach(function (el) {
+        var t = el.getAttribute('data-ov'), v = parseFloat(el.value);
+        if (!isNaN(v)) m.turns[t].v = v;
+        var b = designTurn(t);
+        if (b) applyDesign(t, b); else bad.push(name(t));
+      });
+      m.done[7] = !bad.length;
+      flash(bad.length ? '作れなかったターン: ' + bad.join('、') : '全部作った。Cの表をコピーして機体に書き込む', !bad.length);
+      save(); render();
+    };
+  }
+
+  function stepV90() {
+    var m = M(), ck = m.checks;
+    return head('real', 'V90の連続テスト', 'V90 が3つほど続く迷路を作って走らせる。') +
+      '<ul class="check">' +
+      '<li><label><input type="checkbox" data-ck="v90maze"' + (ck.v90maze ? ' checked' : '') + '> V90 が 3 連続する迷路を作った</label></li>' +
+      '<li><label><input type="checkbox" data-ck="v90cam"' + (ck.v90cam ? ' checked' : '') + '> 天井カメラで走行中の軌道を撮影している</label></li>' +
+      '<li><label><input type="checkbox" data-ck="v90ok"' + (ck.v90ok ? ' checked' : '') + '> 壁に当たらず抜けられた</label></li></ul>' +
+      '<p class="note">ここは機体をぶつけながらの調整になる。軌道を撮影して、少ない試行で収束させる。' +
+      ' 撮影した軌跡のずれは、手順6で V90 を選んで前後の距離に直せる。</p>' +
+      '<div class="box info">ここまでで調整は終わり。実際の迷路を走りながらのターン調整はしない。</div>' + nextPrev(true);
+  }
+  function bindV90() {
+    document.querySelectorAll('[data-ck]').forEach(function (el) {
+      el.onchange = function () {
+        var m = M(); m.checks[el.getAttribute('data-ck')] = el.checked;
+        m.done[8] = !!(m.checks.v90maze && m.checks.v90ok);
+        save(); render();
+      };
+    });
+  }
+
+  var BINDS = [bindSetup, bindDesign45, bindStopTest, bindFit, bindRedesign, bindFix, bindRepeat, bindOthers, bindV90];
+
+  function head(kind, title, lead) {
+    var tag = kind === 'real' ? '<span class="tag real">実機</span>' : kind === 'sim' ? '<span class="tag sim">シミュレーター</span>' : '<span class="tag sim">準備</span>';
+    return '<h2>' + tag + '手順 ' + (state.step + 1) + '. ' + title + '</h2><p class="lead">' + lead + '</p>' +
+      '<div id="flash"></div>';
+  }
+  function nextPrev(last) {
+    return '<div class="steps-actions">' +
+      (state.step > 0 ? '<button data-go="-1">← 前の手順</button>' : '<span></span>') +
+      (last ? '<span></span>' : '<button data-go="1">次の手順 →</button>') + '</div>';
+  }
+  var flashMsg = null;
+  function flash(msg, ok) { flashMsg = { msg: msg, ok: ok }; }
+
+  /* ---------- 描画 ---------- */
+  function renderNav() {
+    var m = M();
+    $('stepNav').innerHTML = STEPS.map(function (s, i) {
+      return '<li><a href="#" data-step="' + i + '" class="' + (i === state.step ? 'on ' : '') + (m.done[i] ? 'done' : '') + '">' +
+        '<span class="num">' + (m.done[i] ? '✓' : i + 1) + '</span><span class="label">' + s.title +
+        '<span class="where">' + s.where + '</span></span></a></li>';
+    }).join('');
+    document.querySelectorAll('[data-step]').forEach(function (a) {
+      a.onclick = function (e) { e.preventDefault(); goStep(+a.getAttribute('data-step')); };
+    });
+  }
+
+  function currentPlotTurn() {
+    var s = state.step, m = M();
+    if (s === 2 || s === 3) return m.fitTurn;
+    if (s === 5 || s === 6) return m.fixTurn;
+    return state.plotTurn || 'in45';
+  }
+  /* 手順を移ったとき、その手順で見るターンを図に出す */
+  function goStep(i) {
+    state.step = Math.max(0, Math.min(STEPS.length - 1, i));
+    if (state.step === 1 || state.step === 4) state.plotTurn = 'in45';
+    if (state.step === 8) state.plotTurn = 'v90';
+    save(); render(); window.scrollTo(0, 0);
+  }
+
+  function renderPlot() {
+    var t = currentPlotTurn(), m = M(), C0 = C(), h = C0 / 2;
+    $('plotTurn').innerHTML = turnOptions(t);
+    $('plotTitle').textContent = name(t) + ' の軌跡';
+    var showTest = state.step >= 2 && state.step <= 6;
+    var p = m.turns[t];
+    var r0 = T.evaluate(t, C0, p, 0, { dt: 5e-5, trace: true });
+    var r1 = T.evaluate(t, C0, p, m.k, { dt: 5e-5, trace: true });
+    var g = T.geometry(t, C0);
+    function G(pt) { return T.toGlobal(t, C0, pt); }
+    var tr0 = r0.trace.map(G), tr1 = r1.trace.map(G);
+    var ea = g.end[2] * Math.PI / 180, sa = g.start[2] * Math.PI / 180;
+    var L = showTest ? m.testLen : 0;
+    var ext = function (tr) {
+      var e = tr[tr.length - 1]; return [e[0] + L * Math.cos(ea), e[1] + L * Math.sin(ea)];
+    };
+    var idealStop = [g.end[0] + L * Math.cos(ea), g.end[1] + L * Math.sin(ea)];
+    var pts = tr0.concat(tr1, [[g.start[0] - 0.4 * C0 * Math.cos(sa), g.start[1] - 0.4 * C0 * Math.sin(sa)], g.end,
+      [g.end[0] + 0.4 * C0 * Math.cos(ea), g.end[1] + 0.4 * C0 * Math.sin(ea)]]);
+    if (showTest) pts.push(idealStop, ext(tr0), ext(tr1));
+    var xs = pts.map(function (q) { return q[0]; }), ys = pts.map(function (q) { return q[1]; });
+    var pad = 0.25 * C0;
+    var x0 = Math.min.apply(null, xs) - pad, x1 = Math.max.apply(null, xs) + pad;
+    var y0 = Math.min.apply(null, ys) - pad, y1 = Math.max.apply(null, ys) + pad;
+    var W = 400, sc = W / Math.max(x1 - x0, y1 - y0);
+    var Hh = (y1 - y0) * sc, Ww = (x1 - x0) * sc;
+    function X(q) { return ((q[0] - x0) * sc).toFixed(1); }
+    function Y(q) { return ((y1 - q[1]) * sc).toFixed(1); }
+    function line(a, b, attrs) { return '<line x1="' + X(a) + '" y1="' + Y(a) + '" x2="' + X(b) + '" y2="' + Y(b) + '" ' + attrs + '/>'; }
+    function poly(tr, attrs) { return '<polyline fill="none" points="' + tr.map(function (q) { return X(q) + ',' + Y(q); }).join(' ') + '" ' + attrs + '/>'; }
+    var out = [];
+    // 壁の境界と柱
+    for (var gx = Math.floor((x0 - h) / C0) * C0 + h; gx <= x1; gx += C0) out.push(line([gx, y0], [gx, y1], 'stroke="var(--grid)"'));
+    for (var gy = Math.floor((y0 - h) / C0) * C0 + h; gy <= y1; gy += C0) out.push(line([x0, gy], [x1, gy], 'stroke="var(--grid)"'));
+    var ps = Math.max(3, 6 * C0 / 180 * sc);
+    for (gx = Math.floor((x0 - h) / C0) * C0 + h; gx <= x1; gx += C0)
+      for (gy = Math.floor((y0 - h) / C0) * C0 + h; gy <= y1; gy += C0)
+        out.push('<rect x="' + (+X([gx, gy]) - ps / 2).toFixed(1) + '" y="' + (+Y([gx, gy]) - ps / 2).toFixed(1) + '" width="' + ps.toFixed(1) + '" height="' + ps.toFixed(1) + '" fill="var(--post)"/>');
+    // 理想の線
+    var far = 3 * C0;
+    out.push(line([g.start[0] - far * Math.cos(sa), g.start[1] - far * Math.sin(sa)], [g.start[0] + far * Math.cos(sa), g.start[1] + far * Math.sin(sa)],
+      'stroke="var(--ideal)" stroke-dasharray="6 4" stroke-width="1.2"'));
+    out.push(line([g.end[0] - far * Math.cos(ea), g.end[1] - far * Math.sin(ea)], [g.end[0] + far * Math.cos(ea), g.end[1] + far * Math.sin(ea)],
+      'stroke="var(--ideal)" stroke-dasharray="6 4" stroke-width="1.2"'));
+    out.push(poly(tr0, 'stroke="var(--sim0)" stroke-width="2"'));
+    out.push(poly(tr1, 'stroke="var(--sim)" stroke-width="2.4"'));
+    if (showTest) {
+      out.push(line(tr0[tr0.length - 1], ext(tr0), 'stroke="var(--sim0)" stroke-width="2" stroke-dasharray="2 3"'));
+      out.push(line(tr1[tr1.length - 1], ext(tr1), 'stroke="var(--sim)" stroke-width="2" stroke-dasharray="2 3"'));
+      out.push('<circle cx="' + X(idealStop) + '" cy="' + Y(idealStop) + '" r="5" fill="none" stroke="var(--ideal)" stroke-width="2"/>');
+    }
+    [[g.start, 'var(--ink)'], [g.end, 'var(--ideal)']].forEach(function (q) {
+      out.push('<circle cx="' + X(q[0]) + '" cy="' + Y(q[0]) + '" r="3.5" fill="' + q[1] + '"/>');
+    });
+    var svg = $('plot');
+    svg.setAttribute('viewBox', '0 0 ' + Ww.toFixed(0) + ' ' + Hh.toFixed(0));
+    svg.innerHTML = out.join('');
+    $('metrics').innerHTML =
+      '<div class="metric"><span>ピーク横加速度</span><b>' + fx(r1.aLat) + '</b><span>m/s²</span></div>' +
+      '<div class="metric"><span>終点のずれ 前後</span><b>' + sg(r1.along) + '</b><span>mm (k=0: ' + sg(r0.along) + ')</span></div>' +
+      '<div class="metric"><span>終点のずれ 横</span><b>' + sg(r1.lat) + '</b><span>mm (k=0: ' + sg(r0.lat) + ')</span></div>';
+  }
+
+  function renderTable() {
+    var m = M(), sel = currentPlotTurn();
+    var html = '<tr><th>ターン</th><th>速度 [mm/s]</th><th>最大角速度 [deg/s]</th><th>角加速度 [deg/s²]</th><th>前 [mm]</th><th>後 [mm]</th>' +
+      '<th>ピーク角速度</th><th>横加速度 [m/s²]</th><th>ずれ 前後</th><th>ずれ 横</th><th></th></tr>';
+    T.TURNS.forEach(function (t) {
+      var p = m.turns[t], r = evalTurn(t);
+      function inp(key, step) { return '<td><input type="number" step="' + step + '" data-tk="' + t + ':' + key + '" value="' + fx(p[key], key === 'st' || key === 'end' ? 1 : 0) + '"></td>'; }
+      var bad = Math.abs(r.along) > 1 || Math.abs(r.lat) > 1;
+      html += '<tr data-row="' + t + '"' + (t === sel ? ' class="sel"' : '') + '><td>' + name(t) + '</td>' +
+        inp('v', 50) + inp('wMax', 25) + inp('wAc', 5000) + inp('st', 0.5) + inp('end', 0.5) +
+        '<td>' + fx(r.peak, 0) + '</td><td>' + fx(r.aLat) + '</td>' +
+        '<td style="color:' + (bad ? 'var(--warn)' : 'inherit') + '">' + sg(r.along) + '</td>' +
+        '<td style="color:' + (bad ? 'var(--warn)' : 'inherit') + '">' + sg(r.lat) + '</td>' +
+        '<td><button class="small" data-speed="' + t + '" title="滑りがなければ同じ軌跡になるよう角速度・角加速度を換算">速度を換算</button></td></tr>';
+    });
+    $('turnTable').innerHTML = html;
+    document.querySelectorAll('[data-tk]').forEach(function (el) {
+      el.onchange = function () {
+        var kk = el.getAttribute('data-tk').split(':'), v = parseFloat(el.value);
+        var free = kk[1] === 'st' || kk[1] === 'end';
+        if (!isNaN(v) && (free || v > 0)) { M().turns[kk[0]][kk[1]] = v; save(); render(); }
+      };
+    });
+    document.querySelectorAll('[data-row]').forEach(function (tr) {
+      tr.onclick = function (e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+        state.plotTurn = tr.getAttribute('data-row'); save(); renderPlot(); renderTable();
+      };
+    });
+    document.querySelectorAll('[data-speed]').forEach(function (b) {
+      b.onclick = function () {
+        var t = b.getAttribute('data-speed'), p = M().turns[t];
+        var v = parseFloat(prompt(name(t) + ' の新しい速度 [mm/s]', p.v));
+        if (isNaN(v) || v <= 0) return;
+        var q = T.scaleSpeed(p, v);
+        p.v = q.v; p.wMax = q.wMax; p.wAc = q.wAc; save(); render();
+      };
+    });
+  }
+
+  function render() {
+    document.querySelectorAll('#sizeSeg button').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-size') === state.size); });
+    renderNav();
+    var s = STEPS[state.step];
+    $('stepCard').innerHTML = s.render();
+    if (flashMsg) { $('flash').innerHTML = '<div class="box ' + (flashMsg.ok ? 'ok' : 'warn') + '">' + esc(flashMsg.msg) + '</div>'; flashMsg = null; }
+    BINDS[state.step]();
+    bindCommon();
+    renderPlot();
+    renderTable();
+  }
+  function bindCommon() {
+    document.querySelectorAll('[data-maxv]').forEach(function (b) {
+      b.onclick = function () {
+        var t = b.getAttribute('data-maxv'), v = findMaxSpeed(t);
+        flash(v ? name(t) + ' は ' + v + ' mm/s なら作れる。この速度で作った' : name(t) + ' は 200 mm/s まで下げても作れない。曲がり始めの下限を見直す', !!v);
+        if (v && state.step === 4) M().done[4] = true;
+        if (v && state.step === 1) M().done[1] = true;
+        save(); render();
+      };
+    });
+    document.querySelectorAll('[data-go]').forEach(function (b) {
+      b.onclick = function () { goStep(state.step + +b.getAttribute('data-go')); };
+    });
+  }
+
+  /* ---------- 書き出し ---------- */
+  function cTable() {
+    var m = M(), lines = [];
+    lines.push('/* ターンシミュレーターの出力 (' + T.SIZES[state.size].label + '、区画' + C() + 'mm、k=' + fx(m.k, 4) + ' deg/(m/s^2))');
+    lines.push(' * 左ターンの値。右ターンは角度の符号を反転する。');
+    lines.push(' * offset_st / offset_end は「理想のターン開始点から曲がり始めるまで」「曲がり終わってから理想の終了点まで」の距離[mm]。');
+    lines.push(' * 壁切れ込みでオフセットを持つ機体は、その分を換算すること。 */');
+    lines.push('/*            v     angle  w_max     w_ac    offset_st offset_end */');
+    T.TURNS.forEach(function (t) {
+      var p = m.turns[t], g = T.geometry(t, C());
+      lines.push('/* ' + name(t) + ' */ {' + [fx(p.v, 0), g.angle, fx(p.wMax, 0), fx(p.wAc, 0), fx(p.st, 1), fx(p.end, 1)]
+        .map(function (s) { return String(s).padStart(7); }).join(', ') + '},');
+    });
+    return lines.join('\n');
+  }
+
+  $('btnExportC').onclick = function () {
+    var text = cTable();
+    var done = function () { flash('Cの表をクリップボードにコピーした', true); render(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { prompt('コピーする', text); });
+    else prompt('コピーする', text);
+  };
+  $('btnExportJson').onclick = function () {
+    var blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'turnsim-' + state.size + '.json'; a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  };
+  $('btnImportJson').onclick = function () { $('fileImport').click(); };
+  $('fileImport').onchange = function () {
+    var f = this.files[0]; if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      try {
+        var s = JSON.parse(rd.result);
+        if (!s.machines) throw new Error('形式が違う');
+        state = s; if (!state.machines[state.size]) state.machines[state.size] = defaults(state.size);
+        save(); flash('読み込んだ', true); render();
+      } catch (e) { flash('読み込めなかった: ' + e.message, false); render(); }
+    };
+    rd.readAsText(f);
+    this.value = '';
+  };
+  $('btnReset').onclick = function () {
+    if (!confirm(T.SIZES[state.size].label + ' の設定を初期値に戻す')) return;
+    state.machines[state.size] = defaults(state.size); state.step = 0; save(); render();
+  };
+  document.querySelectorAll('#sizeSeg button').forEach(function (b) {
+    b.onclick = function () {
+      state.size = b.getAttribute('data-size');
+      if (!state.machines[state.size]) state.machines[state.size] = defaults(state.size);
+      save(); render();
+    };
+  });
+  $('plotTurn').onchange = function () {
+    var t = this.value, m = M(), s = state.step;
+    if (s === 2 || s === 3) m.fitTurn = t;
+    else if (s === 5 || s === 6) m.fixTurn = t;
+    state.plotTurn = t; save(); render();
+  };
+
+  load();
+  render();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "name": "turn-sim-koguma",
+  "private": true,
+  "description": "マイクロマウスのターンシミュレーター(クラシック/ハーフ対応、ターン調整の手順ガイド付き)",
+  "scripts": {
+    "test": "node test/test.js"
+  }
+}
