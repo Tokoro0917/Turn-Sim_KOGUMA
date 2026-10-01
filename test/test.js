@@ -168,5 +168,20 @@ for (const size of Object.keys(T.SIZES)) {
   check(none.result() === null, '作れないときは null');
 }
 
+// 15. 区画端: 区画中心から始まるターンは開始点の半区画手前が区画の境界、斜めから始まるターンは開始点が境界上
+for (const size of Object.keys(T.SIZES)) {
+  const C = T.SIZES[size].cell, h = C / 2;
+  const onBoundary = (x) => Math.abs(((x - h) % C + C) % C) < 1e-9; // 境界は ±C/2 + nC
+  const onCenter = (x) => Math.abs((x % C + C) % C) < 1e-9 || Math.abs((x % C + C) % C - C) < 1e-9;
+  for (const t of T.TURNS) {
+    const g = T.geometry(t, C), off = T.edgeOffset(t, C), a = g.start[2] * Math.PI / 180;
+    const ex = g.start[0] - off * Math.cos(a), ey = g.start[1] - off * Math.sin(a);
+    // 進行方向の座標が境界の位置にある(縦向きなら y、斜めなら x と y の片方が境界・もう片方が中心)
+    const ok = Math.abs(Math.sin(a)) > 0.99 ? onBoundary(ey) && onCenter(ex)
+      : (onBoundary(ex) && onCenter(ey)) || (onBoundary(ey) && onCenter(ex));
+    check(ok, `${size} ${t}: 区画端の位置 (${ex}, ${ey})`);
+  }
+}
+
 console.log(fails ? `${fails}件の失敗` : 'OK');
 process.exit(fails ? 1 : 0);
