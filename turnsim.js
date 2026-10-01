@@ -278,29 +278,56 @@
 
   /* 合成加速度が aLim 以下で作れる一番速い速度を探す(速度一定のターン、二分探索)。
    * c = {k, minSt, minEnd, wacMax, aLim, vLo, vHi, step}
-   * 各速度で横加速度が最小になるパラメータ(design)を作り、それが aLim 以下なら作れる */
-  function maxSpeed(turn, C, c) {
+   * 各速度で横加速度が最小になるパラメータ(design)を作り、それが aLim 以下なら作れる。
+   * 画面を止めずに少しずつ進められるよう、1回の試行ごとに next() で進める形にしてある:
+   *   var s = maxSpeedSearch(...); while (!s.next().done); s.result()
+   * next() は {done, v(試した速度), ok(作れたか)} を返す。frac() は進み具合(0〜1) */
+  function maxSpeedSearch(turn, C, c) {
+    var aLim = c.aLim == null ? Infinity : c.aLim;
     function solve(v) {
       var d = design(turn, C, { v: v, k: c.k, minSt: c.minSt, minEnd: c.minEnd, wacMax: c.wacMax });
       if (!d) return null;
       var r = evaluate(turn, C, d, c.k, { dt: 1e-4 });
-      if (r.aTot > c.aLim) return null;
+      if (r.aTot > aLim) return null;
       d.time = r.time; d.aTot = r.aTot;
       return d;
     }
     var step = c.step || 10;
-    var lo = c.vLo, hi = c.vHi;
-    var best = solve(lo);
-    if (!best) return null;
-    var top = solve(hi);
-    if (top) return top;
-    while (hi - lo > step) {
-      var mid = Math.round((lo + hi) / 2 / step) * step;
-      if (mid <= lo || mid >= hi) break;
-      var r = solve(mid);
-      if (r) { lo = mid; best = r; } else { hi = mid; }
-    }
-    return best;
+    var lo = c.vLo, hi = c.vHi, best = null, phase = 0, done = false, result = null, n = 0;
+    var total = 2 + Math.max(0, Math.ceil(Math.log(Math.max(1, (hi - lo) / step)) / Math.LN2));
+    function finish(r) { done = true; result = r; }
+    return {
+      total: total,
+      frac: function () { return done ? 1 : Math.min(0.99, n / total); },
+      result: function () { return result; },
+      next: function () {
+        if (done) return { done: true };
+        n++;
+        var r;
+        if (phase === 0) { // 下限で作れなければ解なし
+          best = solve(lo);
+          if (!best) finish(null); else phase = 1;
+          return { done: done, v: lo, ok: !!best };
+        }
+        if (phase === 1) { // 上限で作れればそれが答え
+          r = solve(hi);
+          if (r) finish(r); else phase = 2;
+          return { done: done, v: hi, ok: !!r };
+        }
+        var mid = Math.round((lo + hi) / 2 / step) * step;
+        if (hi - lo <= step || mid <= lo || mid >= hi) { finish(best); return { done: true }; }
+        r = solve(mid);
+        if (r) { lo = mid; best = r; } else { hi = mid; }
+        if (hi - lo <= step) finish(best);
+        return { done: done, v: mid, ok: !!r };
+      }
+    };
+  }
+
+  function maxSpeed(turn, C, c) {
+    var s = maxSpeedSearch(turn, C, c);
+    while (!s.next().done) { /* 進める */ }
+    return s.result();
   }
 
   /* 停止位置テストの横ずれ(実測、内側+)に合う k を求める */
@@ -336,7 +363,7 @@
     SIZES: SIZES, TURNS: TURNS, TURN_NAMES: TURN_NAMES,
     geometry: geometry, idealLocal: idealLocal, toGlobal: toGlobal,
     omegaProfile: omegaProfile, runTurn: runTurn, exitError: exitError, evaluate: evaluate,
-    solveOffsets: solveOffsets, correctOffsets: correctOffsets, design: design, maxSpeed: maxSpeed, fitK: fitK,
+    solveOffsets: solveOffsets, correctOffsets: correctOffsets, design: design, maxSpeed: maxSpeed, maxSpeedSearch: maxSpeedSearch, fitK: fitK,
     scaleSpeed: scaleSpeed, stats: stats
   };
 });

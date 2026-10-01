@@ -154,5 +154,19 @@ for (const size of Object.keys(T.SIZES)) {
   }
 }
 
+// 14. maxSpeedSearch を1回ずつ進めても maxSpeed と同じ答え。進み具合は増えていき、最後に1
+{
+  const c = { k: 0.1, minSt: 37, minEnd: 5, wacMax: 130000, aLim: 45, vLo: 500, vHi: 5000, step: 10 };
+  const s = T.maxSpeedSearch('big90', 180, c);
+  let prev = 0, steps = 0, mono = true;
+  for (;;) { const r = s.next(); steps++; const f = s.frac(); if (f < prev) mono = false; prev = f; if (r.done) break; }
+  const m = T.maxSpeed('big90', 180, c);
+  check(s.result() && m && s.result().v === m.v, 'maxSpeedSearch と maxSpeed が違う');
+  check(mono && s.frac() === 1 && steps <= s.total + 1, `進み具合 steps=${steps} total=${s.total}`);
+  const none = T.maxSpeedSearch('in45', 180, { ...c, aLim: 1 });
+  while (!none.next().done);
+  check(none.result() === null, '作れないときは null');
+}
+
 console.log(fails ? `${fails}件の失敗` : 'OK');
 process.exit(fails ? 1 : 0);

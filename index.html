@@ -48,6 +48,31 @@ button.small { padding: 2px 8px; font-size: 13px; }
 .bar.over i { background: var(--bad); }
 svg.chart { width: 100%; height: auto; display: block; background: var(--bg); border-radius: 8px; margin-top: 6px; }
 .progress { font-size: 13px; color: var(--sub); min-height: 1.6em; }
+/* 計算中のパネル */
+.busy { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(2px); }
+.busy[hidden] { display: none; }
+.busy-box { width: min(460px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 18px 20px; box-shadow: 0 12px 32px rgba(0, 0, 0, .18); }
+.busy-head { display: flex; gap: 12px; align-items: center; font-size: 16px; }
+.spin { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--accent-soft);
+  border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2.4s; } }
+.busy-detail { margin: 10px 0 6px; min-height: 1.6em; font-size: 14px; }
+.bar.big { height: 10px; }
+.bar.big i { background: var(--accent); transition: width .15s; }
+.busy-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--sub); margin-top: 4px;
+  font-variant-numeric: tabular-nums; }
+ul.blist { list-style: none; margin: 12px 0 0; padding: 0; font-size: 13px; max-height: 40vh; overflow: auto; }
+ul.blist li { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+ul.blist li .mark { width: 1.2em; text-align: center; }
+ul.blist li .bn { margin-left: auto; font-variant-numeric: tabular-nums; }
+ul.blist li.wait { color: var(--sub); }
+ul.blist li.run { color: var(--accent); font-weight: 600; }
+ul.blist li.done .mark { color: var(--ok); }
+ul.blist li.bad { color: var(--bad); }
+.busy-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
 nav ol { list-style: none; margin: 0; padding: 0; position: sticky; top: 80px; }
 nav li { margin: 0 0 4px; }
 nav a { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; color: var(--ink); text-decoration: none; }
@@ -164,6 +189,17 @@ ul.check li { margin: 4px 0; }
   </main>
 </div>
 
+<div class="busy" id="busy" hidden role="dialog" aria-modal="true" aria-labelledby="busyTitle">
+  <div class="busy-box">
+    <div class="busy-head"><div class="spin" aria-hidden="true"></div><b id="busyTitle"></b></div>
+    <div class="busy-detail" id="busyDetail" aria-live="polite"></div>
+    <div class="bar big"><i id="busyBar" style="width:0"></i></div>
+    <div class="busy-meta"><span id="busyPct"></span><span id="busyTime"></span></div>
+    <ul class="blist" id="busyList"></ul>
+    <div class="busy-actions"><button id="busyCancel">中止</button></div>
+  </div>
+</div>
+
 <script src="turnsim.js"></script>
 <script>
 (function () {
@@ -182,12 +218,12 @@ ul.check li { margin: 4px 0; }
       k: 0, wacMax: size === 'classic' ? 130000 : 250000, minEnd: 5 * s, testLen: 4 * C * Math.SQRT1_2,
       tol: 3, turns: {}, done: {}, measure: {}, fitTurn: 'in45', fixTurn: 'in45', repeat: '', checks: {}
     };
+    // ターンのパラメータは仮の値を入れておき、画面を出してから計算する(startInit)
     T.TURNS.forEach(function (t) {
       var minSt = MIN_ST_CLASSIC[t] * s;
-      var c = { v: v, k: 0, minSt: minSt, minEnd: m.minEnd, wacMax: m.wacMax };
-      var b = T.design(t, C, c) || { v: v, wMax: 1000, wAc: 50000, st: minSt, end: m.minEnd };
-      m.turns[t] = { v: v, wMax: b.wMax, wAc: b.wAc, st: b.st, end: b.end, minSt: minSt };
+      m.turns[t] = { v: v, wMax: 1000 * v / 2000 * 180 / C, wAc: 50000, st: minSt, end: m.minEnd, minSt: minSt };
     });
+    m.init = true;
     return m;
   }
 
@@ -260,14 +296,106 @@ ul.check li { margin: 4px 0; }
       '手順1で角加速度の上限を上げる(モーターが出せるか確認)か、速度を下げる。' +
       '<div class="row"><button data-maxv="' + t + '">この条件で出せる一番速い速度を探す</button></div></div>';
   }
-  /* 作れる速度まで 50mm/s ずつ下げて探す */
-  function findMaxSpeed(t) {
-    var p = M().turns[t];
-    for (var v = Math.floor((p.v - 1) / 50) * 50; v >= 200; v -= 50) {
-      var b = designTurn(t, { v: v });
-      if (b) { p.v = v; applyDesign(t, b); return v; }
+  /* ---------- 計算中の表示 ----------
+   * 重い計算は少しずつ進める「仕事(job)」にして、合間に画面を更新する。
+   * job = { title, items: [{label, state, note}], step() -> {done, yield, detail}, frac() -> 0〜1 }
+   * step() は1回分の計算をする。yield が true なら、すぐに画面を更新する */
+  var jobRunning = false;
+  function runJob(job, onDone) {
+    jobRunning = true;
+    var cancelled = false, t0 = performance.now(), last = '';
+    $('busyTitle').textContent = job.title;
+    $('busyCancel').disabled = false;
+    $('busyCancel').textContent = '中止';
+    $('busyCancel').onclick = function () { cancelled = true; this.disabled = true; this.textContent = '中止しています…'; };
+    $('busy').hidden = false;
+    function paint(detail) {
+      if (detail != null) last = detail;
+      var f = job.frac(), el = (performance.now() - t0) / 1000;
+      var rest = f > 0.04 && f < 1 && el > 0.3 ? el * (1 - f) / f : null;
+      $('busyBar').style.width = (f * 100).toFixed(1) + '%';
+      $('busyPct').textContent = Math.round(f * 100) + ' %';
+      $('busyTime').textContent = '経過 ' + el.toFixed(1) + ' 秒' + (rest != null ? '・残り約 ' + Math.max(1, Math.ceil(rest)) + ' 秒' : '');
+      $('busyDetail').textContent = last;
+      $('busyList').innerHTML = (job.items || []).length < 2 ? '' : job.items.map(function (it) {
+        var mark = { done: '✓', run: '▶', bad: '×' }[it.state] || '・';
+        var note = it.state === 'run' ? '計算中' : it.state === 'wait' ? '待ち' : (it.note || '');
+        return '<li class="' + it.state + '"><span class="mark">' + mark + '</span><span>' + esc(it.label) + '</span><span class="bn">' + esc(note) + '</span></li>';
+      }).join('');
     }
-    return null;
+    function finish(c) { jobRunning = false; $('busy').hidden = true; onDone(c); }
+    function tick() {
+      if (cancelled) { finish(true); return; }
+      var tEnd = performance.now() + 60, r;
+      do { r = job.step(); } while (!r.done && !r.yield && performance.now() < tEnd);
+      paint(r.detail);
+      if (r.done) setTimeout(function () { finish(false); }, 0);
+      else setTimeout(tick, 0);
+    }
+    paint('準備中');
+    setTimeout(tick, 30); // まずパネルを表示してから計算を始める
+  }
+  /* ターンを1つずつ計算する仕事。work(t) -> {ok, note} */
+  function turnsJob(title, turns, work) {
+    var items = turns.map(function (t) { return { t: t, label: name(t), state: 'wait' }; });
+    var i = 0, marked = false;
+    return {
+      title: title, items: items,
+      frac: function () { return i / items.length; },
+      step: function () {
+        if (i >= items.length) return { done: true };
+        var it = items[i];
+        if (!marked) { it.state = 'run'; marked = true; return { yield: true, detail: it.label + ' を計算中' }; }
+        var r = work(it.t);
+        it.state = r.ok ? 'done' : 'bad'; it.note = r.note || (r.ok ? '' : '作れない');
+        i++; marked = false;
+        return { done: i >= items.length, yield: true, detail: it.label + ': ' + (r.ok ? '完了' : '作れない') };
+      }
+    };
+  }
+  /* 最高速度を二分探索する仕事。cfg(t) は maxSpeedSearch の条件。got(t, 結果) で受け取る */
+  function maxSpeedJob(title, turns, cfg, got) {
+    var items = turns.map(function (t) { return { t: t, label: name(t), state: 'wait' }; });
+    var i = 0, search = null;
+    return {
+      title: title, items: items,
+      frac: function () { return (i + (search ? search.frac() : 0)) / items.length; },
+      step: function () {
+        if (i >= items.length) return { done: true };
+        var it = items[i];
+        if (!search) {
+          it.state = 'run';
+          search = T.maxSpeedSearch(it.t, C(), cfg(it.t));
+          return { yield: true, detail: it.label + ': 探索を始める' };
+        }
+        var r = search.next(), detail = it.label + ': ';
+        if (r.v != null) detail += fx(r.v, 0) + ' mm/s を試した → ' + (r.ok ? '作れる' : '作れない');
+        if (r.done) {
+          var res = search.result();
+          got(it.t, res);
+          it.state = res ? 'done' : 'bad'; it.note = res ? fx(res.v, 0) + ' mm/s' : '作れない';
+          search = null; i++;
+          return { done: i >= items.length, yield: true, detail: detail };
+        }
+        return { detail: detail };
+      }
+    };
+  }
+  /* 初期値(各ターンのパラメータ)を計算する */
+  function startInit() {
+    var m = M(), size = state.size;
+    runJob(turnsJob('初期値を計算中(' + T.SIZES[size].label + ')', T.TURNS, function (t) {
+      var p = m.turns[t];
+      var b = T.design(t, C(), { v: p.v, k: m.k, minSt: p.minSt, minEnd: m.minEnd, wacMax: m.wacMax });
+      if (b) applyDesign(t, b);
+      return { ok: !!b };
+    }), function () { delete m.init; save(); render(); });
+  }
+  /* 1つのターンを作り直す(ボタン1つ分) */
+  function designJob(title, t, extra, onDone) {
+    var out = null;
+    runJob(turnsJob(title, [t], function (tt) { out = designTurn(tt, extra); return { ok: !!out }; }),
+      function (cancelled) { onDone(cancelled ? undefined : out); });
   }
 
   /* ---------- 手順 ---------- */
@@ -316,14 +444,17 @@ ul.check li { margin: 4px 0; }
         if (!isNaN(x)) m.turns[t].minSt = x;
       });
       var bad = [];
-      T.TURNS.forEach(function (t) {
-        m.turns[t].v = v;
+      T.TURNS.forEach(function (t) { m.turns[t].v = v; });
+      runJob(turnsJob('全ターンを作り直しています', T.TURNS, function (t) {
         var b = designTurn(t);
         if (b) applyDesign(t, b); else bad.push(name(t));
+        return { ok: !!b };
+      }), function (cancelled) {
+        m.done[0] = !cancelled && !bad.length;
+        flash(cancelled ? '中止した(途中まで作ったターンは反映済み)' :
+          bad.length ? '作れなかったターン: ' + bad.join('、') + '(角加速度の上限か速度を見直す)' : '全ターンを作り直した', !cancelled && !bad.length);
+        save(); render();
       });
-      m.done[0] = true;
-      flash(bad.length ? '作れなかったターン: ' + bad.join('、') + '(角加速度の上限か速度を見直す)' : '全ターンを作り直した', !bad.length);
-      save(); render();
     };
   }
 
@@ -341,9 +472,11 @@ ul.check li { margin: 4px 0; }
   function bindDesign45() {
     $('btnD45').onclick = function () {
       var m = M(); m.turns.in45.v = num('inV45', m.turns.in45.v);
-      var b = designTurn('in45');
-      if (!b) { $('d45res').innerHTML = noDesignBox('in45'); bindCommon(); return; }
-      applyDesign('in45', b); m.done[1] = true; save(); render();
+      designJob('斜め入り45 を作っています', 'in45', null, function (b) {
+        if (b === undefined) return;
+        if (!b) { $('d45res').innerHTML = noDesignBox('in45'); bindCommon(); return; }
+        applyDesign('in45', b); m.done[1] = true; save(); render();
+      });
     };
   }
 
@@ -424,9 +557,11 @@ ul.check li { margin: 4px 0; }
   }
   function bindRedesign() {
     $('btnRe45').onclick = function () {
-      var b = designTurn('in45');
-      if (!b) { $('re45res').innerHTML = noDesignBox('in45'); bindCommon(); return; }
-      applyDesign('in45', b); M().done[4] = true; save(); render();
+      designJob('斜め入り45 を作り直しています', 'in45', null, function (b) {
+        if (b === undefined) return;
+        if (!b) { $('re45res').innerHTML = noDesignBox('in45'); bindCommon(); return; }
+        applyDesign('in45', b); M().done[4] = true; save(); render();
+      });
     };
   }
 
@@ -519,11 +654,13 @@ ul.check li { margin: 4px 0; }
     if (alt) alt.onclick = function () {
       // 角加速度を下げて、より滑らかな(ピーク角速度の高い)組み合わせを探す
       var t = M().fixTurn, p = M().turns[t];
-      var b = designTurn(t, { wacMax: Math.max(5000, Math.floor(p.wAc * 0.8 / 5000) * 5000) });
-      if (!b) { flash('角加速度を下げると条件を満たさない。速度を下げる', false); return; }
-      applyDesign(t, b); M().repeat = ''; M().fitTurn = t;
-      flash(name(t) + ' を角加速度 ' + fx(b.wAc, 0) + ' で作り直した。停止位置を測り直す', true);
-      goStep(2);
+      designJob('別の組み合わせを探しています', t, { wacMax: Math.max(5000, Math.floor(p.wAc * 0.8 / 5000) * 5000) }, function (b) {
+        if (b === undefined) return;
+        if (!b) { flash('角加速度を下げると条件を満たさない。速度を下げる', false); render(); return; }
+        applyDesign(t, b); M().repeat = ''; M().fitTurn = t;
+        flash(name(t) + ' を角加速度 ' + fx(b.wAc, 0) + ' で作り直した。停止位置を測り直す', true);
+        goStep(2);
+      });
     };
   }
 
@@ -546,16 +683,22 @@ ul.check li { margin: 4px 0; }
   }
   function bindOthers() {
     $('btnOthers').onclick = function () {
-      var m = M(), bad = [];
+      var m = M(), bad = [], list = [];
       document.querySelectorAll('[data-ov]').forEach(function (el) {
         var t = el.getAttribute('data-ov'), v = parseFloat(el.value);
         if (!isNaN(v)) m.turns[t].v = v;
+        list.push(t);
+      });
+      runJob(turnsJob('残りのターンを作っています', list, function (t) {
         var b = designTurn(t);
         if (b) applyDesign(t, b); else bad.push(name(t));
+        return { ok: !!b };
+      }), function (cancelled) {
+        m.done[7] = !cancelled && !bad.length;
+        flash(cancelled ? '中止した(途中まで作ったターンは反映済み)' :
+          bad.length ? '作れなかったターン: ' + bad.join('、') : '全部作った。Cの表をコピーして機体に書き込む', !cancelled && !bad.length);
+        save(); render();
       });
-      m.done[7] = !bad.length;
-      flash(bad.length ? '作れなかったターン: ' + bad.join('、') : '全部作った。Cの表をコピーして機体に書き込む', !bad.length);
-      save(); render();
     };
   }
 
@@ -715,7 +858,6 @@ ul.check li { margin: 4px 0; }
   }
 
   /* ---------- 最適化 ---------- */
-  var optRunning = false;
   function renderOpt() {
     var m = M(), o = OPT(), ref = refAccel(), in45 = m.turns.in45;
     var rows = T.TURNS.map(function (t) {
@@ -740,8 +882,7 @@ ul.check li { margin: 4px 0; }
       '<label class="f">上 [mm/s]<input type="number" step="50" id="optHi" value="' + fx(o.vHi, 0) + '"></label>' +
       '<label class="f">刻み [mm/s]<input type="number" step="5" id="optStep" value="' + fx(o.step, 0) + '"></label></div>' +
       '<p class="note">そのほかの条件(k、角加速度の上限、曲がり始めの下限、後オフセットの下限)は調整の手順の1で入れた値を使う。</p>' +
-      '<div class="row"><button class="primary" id="optRun"' + (optRunning ? ' disabled' : '') + '>全ターンの最高速度を探す</button>' +
-      '<span class="progress" id="optProg"></span></div>' +
+      '<div class="row"><button class="primary" id="optRun">全ターンの最高速度を探す</button></div>' +
       '<div class="tablewrap"><table><tr><th>ターン</th><th>今の速度</th><th>最高速度</th><th>今との差</th><th>角速度</th><th>角加速度</th><th>前 / 後</th><th>合成加速度</th><th>通過時間 [ms]</th></tr>' + rows + '</table></div>' +
       '<div class="row"><button id="optApply">選んだターンをターン一覧に反映</button></div>' +
       '<p class="note">斜め入り45 自身は、基準に使った速度がそのまま最高速度になる。' +
@@ -760,19 +901,15 @@ ul.check li { margin: 4px 0; }
     });
     $('optRun').onclick = function () {
       readInputs();
-      var m = M(), aLim = refAccel().a, list = T.TURNS.slice(), i = 0;
-      optRunning = true; o.results = {}; o.sel = {};
-      render();
-      (function next() {
-        if (i >= list.length) { optRunning = false; flash('探索が終わった', true); save(); render(); return; }
-        var t = list[i];
-        $('optProg').textContent = '探索中: ' + name(t) + '(' + (i + 1) + ' / ' + list.length + ')';
-        setTimeout(function () {
-          var p = m.turns[t];
-          o.results[t] = T.maxSpeed(t, C(), { k: m.k, minSt: p.minSt, minEnd: m.minEnd, wacMax: m.wacMax, aLim: aLim, vLo: o.vLo, vHi: o.vHi, step: o.step });
-          i++; next();
-        }, 20);
-      })();
+      var m = M(), aLim = refAccel().a;
+      o.results = {}; o.sel = {};
+      runJob(maxSpeedJob('各ターンの最高速度を探しています(基準 ' + fx(aLim) + ' m/s²)', T.TURNS.slice(), function (t) {
+        var p = m.turns[t];
+        return { k: m.k, minSt: p.minSt, minEnd: m.minEnd, wacMax: m.wacMax, aLim: aLim, vLo: o.vLo, vHi: o.vHi, step: o.step };
+      }, function (t, r) { o.results[t] = r; }), function (cancelled) {
+        flash(cancelled ? '中止した(探索が終わったターンだけ表示)' : '探索が終わった', !cancelled);
+        save(); render();
+      });
     };
     $('optApply').onclick = function () {
       var n = 0;
@@ -910,15 +1047,22 @@ ul.check li { margin: 4px 0; }
     bindCommon();
     renderPlot();
     renderTable();
+    if (M().init && !jobRunning) startInit();
   }
   function bindCommon() {
     document.querySelectorAll('[data-maxv]').forEach(function (b) {
       b.onclick = function () {
-        var t = b.getAttribute('data-maxv'), v = findMaxSpeed(t);
-        flash(v ? name(t) + ' は ' + v + ' mm/s なら作れる。この速度で作った' : name(t) + ' は 200 mm/s まで下げても作れない。曲がり始めの下限を見直す', !!v);
-        if (v && state.step === 4) M().done[4] = true;
-        if (v && state.step === 1) M().done[1] = true;
-        save(); render();
+        var t = b.getAttribute('data-maxv'), m = M(), p = m.turns[t], res = null;
+        runJob(maxSpeedJob(name(t) + ' の作れる速度を探しています', [t], function () {
+          return { k: m.k, minSt: p.minSt, minEnd: m.minEnd, wacMax: m.wacMax, vLo: 200, vHi: p.v, step: 10 };
+        }, function (tt, r) { res = r; }), function (cancelled) {
+          if (cancelled) { flash('中止した', false); render(); return; }
+          if (res) applyDesign(t, res);
+          flash(res ? name(t) + ' は ' + fx(res.v, 0) + ' mm/s なら作れる。この速度で作った' : name(t) + ' は 200 mm/s まで下げても作れない。曲がり始めの下限を見直す', !!res);
+          if (res && state.step === 4) m.done[4] = true;
+          if (res && state.step === 1) m.done[1] = true;
+          save(); render();
+        });
       };
     });
     document.querySelectorAll('[data-go]').forEach(function (b) {
@@ -975,7 +1119,7 @@ ul.check li { margin: 4px 0; }
     state.machines[state.size] = defaults(state.size); state.step = 0; save(); render();
   };
   document.querySelectorAll('#viewSeg button').forEach(function (b) {
-    b.onclick = function () { if (optRunning) return; state.view = b.getAttribute('data-view'); save(); render(); window.scrollTo(0, 0); };
+    b.onclick = function () { if (jobRunning) return; state.view = b.getAttribute('data-view'); save(); render(); window.scrollTo(0, 0); };
   });
   document.querySelectorAll('#sizeSeg button').forEach(function (b) {
     b.onclick = function () {
