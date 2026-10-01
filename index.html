@@ -50,7 +50,7 @@ svg.chart { width: 100%; height: auto; display: block; background: var(--bg); bo
 .progress { font-size: 13px; color: var(--sub); min-height: 1.6em; }
 /* 計算中のパネル */
 .busy { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px;
-  background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(2px); }
+  background: color-mix(in srgb, var(--bg) 80%, transparent); }
 .busy[hidden] { display: none; }
 .busy-box { width: min(460px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
   padding: 18px 20px; box-shadow: 0 12px 32px rgba(0, 0, 0, .18); }
@@ -61,7 +61,7 @@ svg.chart { width: 100%; height: auto; display: block; background: var(--bg); bo
 @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2.4s; } }
 .busy-detail { margin: 10px 0 6px; min-height: 1.6em; font-size: 14px; }
 .bar.big { height: 10px; }
-.bar.big i { background: var(--accent); transition: width .15s; }
+.bar.big i { background: var(--accent); }
 .busy-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--sub); margin-top: 4px;
   font-variant-numeric: tabular-nums; }
 ul.blist { list-style: none; margin: 12px 0 0; padding: 0; font-size: 13px; max-height: 40vh; overflow: auto; }
@@ -251,7 +251,20 @@ ul.check li { margin: 4px 0; }
   function turnOptions(sel) {
     return T.TURNS.map(function (t) { return '<option value="' + t + '"' + (t === sel ? ' selected' : '') + '>' + name(t) + '</option>'; }).join('');
   }
-  function evalTurn(t, k) { return T.evaluate(t, C(), M().turns[t], k == null ? M().k : k, { dt: 5e-5 }); }
+  /* 同じ条件の計算結果を使い回す(画面を描き直すたびに同じ軌跡を計算し直さない)。
+   * 戻り値は共有されるので、呼んだ側で書き換えないこと */
+  var evalCache = new Map();
+  function evaluateCached(t, p, k, opt) {
+    var key = [C(), t, p.v, p.vMid, p.wMax, p.wAc, p.st, p.end, k, opt.dt, opt.trace ? 1 : 0, opt.series ? 1 : 0].join('|');
+    var r = evalCache.get(key);
+    if (!r) {
+      if (evalCache.size > 400) evalCache.clear();
+      r = T.evaluate(t, C(), p, k, opt);
+      evalCache.set(key, r);
+    }
+    return r;
+  }
+  function evalTurn(t, k) { return evaluateCached(t, M().turns[t], k == null ? M().k : k, { dt: 5e-5 }); }
   function designTurn(t, extra) {
     var m = M(), p = m.turns[t];
     var c = { v: p.v, k: m.k, minSt: p.minSt, minEnd: m.minEnd, wacMax: m.wacMax };
@@ -775,7 +788,7 @@ ul.check li { margin: 4px 0; }
   /* ---------- 自由設定 ---------- */
   function renderFree() {
     var m = M(), f = FREE(), t = f.turn, p = f.p;
-    var r = T.evaluate(t, C(), p, m.k, { dt: 5e-5, series: true });
+    var r = evaluateCached(t, p, m.k, { dt: 5e-5, series: true });
     var ref = refAccel();
     var use = r.aTot / ref.a;
     function inp(key, step, label) {
@@ -933,8 +946,8 @@ ul.check li { margin: 4px 0; }
     $('plotTitle').textContent = name(t) + ' の軌跡';
     var showTest = state.view === 'steps' && state.step >= 2 && state.step <= 6;
     var p = state.view === 'free' ? FREE().p : m.turns[t];
-    var r0 = T.evaluate(t, C0, p, 0, { dt: 5e-5, trace: true });
-    var r1 = T.evaluate(t, C0, p, m.k, { dt: 5e-5, trace: true });
+    var r0 = evaluateCached(t, p, 0, { dt: 5e-5, trace: true });
+    var r1 = evaluateCached(t, p, m.k, { dt: 5e-5, trace: true });
     var g = T.geometry(t, C0);
     function G(pt) { return T.toGlobal(t, C0, pt); }
     var tr0 = r0.trace.map(G), tr1 = r1.trace.map(G);

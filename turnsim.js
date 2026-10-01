@@ -210,39 +210,51 @@
   function design(turn, C, c) {
     var g = geometry(turn, C);
     var e = idealLocal(turn, C);
-    var best = null;
-    var wStep = 25, wacStep = 5000;
-    var wTop = 12000;
     if (Math.abs(Math.sin(e[2] * D2R)) < 1e-6) return design180(turn, C, c);
-    for (var w = 100; w <= wTop; w += wStep) {
-      // ピーク横加速度は v*ω で決まる。すでに最良より大きければ打ち切り
-      if (best && (c.v / 1000) * w * D2R > best.aLat + 1e-9) break;
-      for (var wac = wacStep; wac <= c.wacMax + 1e-9; wac += wacStep) {
-        var p = { v: c.v, wMax: w, wAc: wac, st: 0, end: 0 };
-        var sol;
-        if (Math.abs(Math.sin(e[2] * D2R)) < 1e-6) {
-          sol = solveOffsets(turn, C, p, c.k, { dt: 2e-4, st180: c.minSt });
-          if (Math.abs(sol.latErr) > C / 180) continue;
-          if (sol.end < c.minEnd) {
-            sol.st += c.minEnd - sol.end;
-            sol.end = c.minEnd;
-          }
-        } else {
-          sol = solveOffsets(turn, C, p, c.k, { dt: 2e-4 });
-        }
-        if (sol.st < c.minSt - 1e-6 || sol.end < c.minEnd - 1e-6) continue;
-        var prof = omegaProfile(g.angle, w, wac);
-        var aLat = (c.v / 1000) * prof.peak * D2R;
-        if (!best || aLat < best.aLat - 1e-9) {
-          best = { v: c.v, wMax: w, wAc: wac, st: sol.st, end: sol.end, aLat: aLat, peak: prof.peak };
-        }
+    // 角速度を上げるほど旋回半径が小さくなり、理想の線に乗るための前後のオフセットが長くなる。
+    // なので角加速度ごとに「オフセットが下限を満たす一番小さい角速度」を二分法で求めれば、
+    // それがその角加速度でピーク横加速度が最小の解になる。角加速度を振って一番小さいものを取る
+    // 探索中は粗い時間刻み(dt)で積分し、最後に一番良かった角加速度だけ細かい刻みで詰め直す
+    var dt = 1e-3;
+    function feasible(w, wac) {
+      var sol = solveOffsets(turn, C, { v: c.v, wMax: w, wAc: wac, st: 0, end: 0 }, c.k, { dt: dt });
+      return sol.st >= c.minSt - 1e-6 && sol.end >= c.minEnd - 1e-6;
+    }
+    function lowest(wac, lo, hi) { // lo は不可・hi は可として、可になる一番小さい角速度
+      for (var i = 0; i < 30 && hi - lo > 0.05; i++) {
+        var mid = (lo + hi) / 2;
+        if (feasible(mid, wac)) hi = mid; else lo = mid;
       }
+      return hi;
+    }
+    var best = null;
+    for (var wac = 5000; wac <= c.wacMax + 1e-9; wac += 5000) {
+      // これ以上角速度を上げても三角形になって形が変わらない上限
+      var cap = Math.sqrt(2 * wac * g.angle / Math.PI);
+      var lo = 50, hi = cap;
+      if (best && hi * (c.v / 1000) * D2R >= best.aLat && !feasible(Math.min(hi, best.peak), wac)) continue;
+      if (!feasible(hi, wac)) continue;
+      hi = feasible(lo, wac) ? lo : lowest(wac, lo, hi);
+      var prof = omegaProfile(g.angle, hi, wac);
+      var aLat = (c.v / 1000) * prof.peak * D2R;
+      if (!best || aLat < best.aLat - 1e-9) best = { v: c.v, wMax: hi, wAc: wac, aLat: aLat, peak: prof.peak };
     }
     if (!best) return null;
-    // 細かい刻みで解き直す
-    var fin = solveOffsets(turn, C, best, c.k, { st180: best.st });
-    best.st = fin.st;
-    best.end = fin.end;
+    // 一番良かった角加速度で、細かい刻みで境目を詰め直す
+    dt = 2e-4;
+    var wl = best.wMax * 0.97, wh = best.wMax * 1.03;
+    var capB = Math.sqrt(2 * best.wAc * g.angle / Math.PI);
+    if (wh > capB) wh = capB;
+    if (feasible(wh, best.wAc) && !feasible(wl, best.wAc)) best.wMax = lowest(best.wAc, wl, wh);
+    // 二分法の幅のぶん下限をわずかに割ることがあるので、少しだけ角速度を足してから細かい刻みで解き直す
+    for (var j = 0; j < 20; j++) {
+      var fin = solveOffsets(turn, C, best, c.k, {});
+      if (fin.st >= c.minSt - 0.05 && fin.end >= c.minEnd - 0.05) { best.st = fin.st; best.end = fin.end; break; }
+      best.wMax += 0.25;
+    }
+    if (best.st == null) return null;
+    var pr = omegaProfile(g.angle, best.wMax, best.wAc);
+    best.peak = pr.peak; best.aLat = (c.v / 1000) * pr.peak * D2R;
     return best;
   }
 
@@ -251,21 +263,26 @@
   function design180(turn, C, c) {
     var g = geometry(turn, C);
     var e = idealLocal(turn, C);
+    var dt = 1e-3; // 探索中は粗い刻み。最後に細かい刻みで詰め直す
     function lat(w, wac) {
-      return runTurn({ v: c.v, wMax: w, wAc: wac, st: 0, end: 0 }, g.angle, c.k, { dt: 2e-4 }).y - e[1];
+      return runTurn({ v: c.v, wMax: w, wAc: wac, st: 0, end: 0 }, g.angle, c.k, { dt: dt }).y - e[1];
     }
-    var best = null;
-    for (var wac = 5000; wac <= c.wacMax + 1e-9; wac += 5000) {
-      // 角速度を上げると旋回半径が小さくなり、横の移動量が減る
-      var lo = 50, hi = 20000;
-      if (lat(lo, wac) < 0 || lat(hi, wac) > 0) continue;
-      for (var i = 0; i < 40; i++) {
+    function root(wac, lo, hi) { // 横ずれが0になる角速度
+      for (var i = 0; i < 30 && hi - lo > 0.01; i++) {
         var mid = (lo + hi) / 2;
         if (lat(mid, wac) > 0) lo = mid; else hi = mid;
       }
-      var w = (lo + hi) / 2;
+      return (lo + hi) / 2;
+    }
+    var best = null;
+    for (var wac = 5000; wac <= c.wacMax + 1e-9; wac += 5000) {
+      // 角速度を上げると旋回半径が小さくなり、横の移動量が減る。
+      // 三角形になる上限(cap)より上は形が変わらないので、そこまでで探す
+      var lo = 50, hi = Math.sqrt(2 * wac * g.angle / Math.PI);
+      if (lat(lo, wac) < 0 || lat(hi, wac) > 0) continue;
+      var w = root(wac, lo, hi);
       var p = { v: c.v, wMax: w, wAc: wac, st: c.minSt, end: 0 };
-      var r = runTurn(p, g.angle, c.k, { dt: 2e-4 });
+      var r = runTurn(p, g.angle, c.k, { dt: dt });
       if (Math.abs(r.y - e[1]) > 0.5) continue; // 三角形で頭打ちになり届かない
       var end = c.minSt + (r.x - c.minSt) - e[0];
       var st = c.minSt;
@@ -277,6 +294,14 @@
       }
     }
     if (!best) return null;
+    dt = 2e-4;
+    var cb = Math.sqrt(2 * best.wAc * g.angle / Math.PI);
+    var l2 = best.wMax * 0.97, h2 = Math.min(cb, best.wMax * 1.03);
+    if (lat(l2, best.wAc) > 0 && lat(h2, best.wAc) < 0) {
+      best.wMax = root(best.wAc, l2, h2);
+      var pr2 = omegaProfile(g.angle, best.wMax, best.wAc);
+      best.peak = pr2.peak; best.aLat = (c.v / 1000) * pr2.peak * D2R;
+    }
     var fin = solveOffsets(turn, C, best, c.k, { st180: best.st });
     best.st = fin.st;
     best.end = fin.end;
