@@ -176,7 +176,7 @@ ul.check li { margin: 4px 0; }
         <span><i style="border-color:var(--sim0)"></i>滑りなし (k=0)</span>
         <span><i style="border-color:var(--sim)"></i>滑りあり (今の k)</span>
         <span>■ 柱</span>
-        <span><i style="border-color:var(--ink);border-top-width:3px"></i>区画端 (前距離の基準)</span>
+        <span><i style="border-color:var(--ink);border-top-width:3px"></i>ターン区間の始まり (前距離の基準)</span>
       </div>
       <div class="metrics" id="metrics"></div>
     </section>
@@ -184,7 +184,7 @@ ul.check li { margin: 4px 0; }
     <section class="card">
       <h2>ターン一覧</h2>
       <p class="lead">シミュレーターが使っている今のパラメータ。直接書き換えてもよい。行を押すと右上に軌跡を表示する。
-        ターンは「前距離 → ターン → 後距離」でできている。前距離は区画端(ターンに入る区画の境界)から曲がり始めるまで、
+        ターンは「前距離 → ターン → 後距離」でできている。前距離はターン区間の始まり(大回り・斜め入りは区画の中心、斜め出・V90 は斜めの壁の中点)から曲がり始めるまで、
         後距離は曲がり終わった直後から直進する距離 [mm]。</p>
       <div class="tablewrap"><table id="turnTable"></table></div>
     </section>
@@ -276,9 +276,6 @@ ul.check li { margin: 4px 0; }
     if (b.v != null) p.v = b.v;
     p.wMax = b.wMax; p.wAc = b.wAc; p.st = b.st; p.end = b.end; p.vMid = null;
   }
-  /* 前距離(区画端から)と内部の st(理想のターン開始点から)の換算 */
-  function FE(t) { return T.edgeOffset(t, C()); }
-  function front(t, st) { return st + FE(t); }
   function copyP(p) { return { v: p.v, vMid: p.vMid == null ? p.v : p.vMid, wMax: p.wMax, wAc: p.wAc, st: p.st, end: p.end }; }
   /* 自由設定・最適化の状態(古い保存データにはないので作る) */
   function FREE() {
@@ -303,13 +300,13 @@ ul.check li { margin: 4px 0; }
       '<span>速度</span><span>' + fx(p.v, 0) + ' mm/s</span>' +
       '<span>最大角速度</span><span>' + fx(p.wMax, 0) + ' deg/s (実際のピーク ' + fx(r.peak, 0) + ')</span>' +
       '<span>角加速度</span><span>' + fx(p.wAc, 0) + ' deg/s²</span>' +
-      '<span>前距離 / 後距離</span><span>' + fx(front(t, p.st)) + ' / ' + fx(p.end) + ' mm</span>' +
+      '<span>前距離 / 後距離</span><span>' + fx(p.st) + ' / ' + fx(p.end) + ' mm</span>' +
       '<span>ピーク横加速度</span><span>' + fx(r.aLat) + ' m/s²</span>' +
       '</div>';
   }
   function noDesignBox(t) {
     var p = M().turns[t];
-    return '<div class="box bad">' + name(t) + ' の条件を満たすパラメータが見つからない。前距離の下限(' + fx(front(t, p.minSt)) + ' mm)' +
+    return '<div class="box bad">' + name(t) + ' の条件を満たすパラメータが見つからない。前距離の下限(' + fx(p.minSt) + ' mm)' +
       'から曲がり始めて、角加速度 ' + fx(M().wacMax, 0) + ' deg/s² 以下では理想の線に乗れない。' +
       '手順1で角加速度の上限を上げる(モーターが出せるか確認)か、速度を下げる。' +
       '<div class="row"><button data-maxv="' + t + '">この条件で出せる一番速い速度を探す</button></div></div>';
@@ -432,8 +429,8 @@ ul.check li { margin: 4px 0; }
   function stepSetup() {
     var m = M(), C0 = C();
     var rows = T.TURNS.map(function (t) {
-      return '<tr><td>' + name(t) + '</td><td><input type="number" step="1" data-minst="' + t + '" value="' + fx(front(t, m.turns[t].minSt)) + '"></td>' +
-        '<td class="note" style="text-align:left">' + (/^(out|v90)/.test(t) ? '斜めの壁の中点' : '入る区画の手前の境界') + '</td></tr>';
+      return '<tr><td>' + name(t) + '</td><td><input type="number" step="1" data-minst="' + t + '" value="' + fx(m.turns[t].minSt) + '"></td>' +
+        '<td class="note" style="text-align:left">' + (/^(out|v90)/.test(t) ? '斜めの壁の中点' : '区画の中心') + '</td></tr>';
     }).join('');
     return head('準備', '機体の設定', '迷路のサイズと、機体の限界を入れる。ここで入れた条件の中でシミュレーターがパラメータを探す。') +
       '<div class="row">' +
@@ -446,9 +443,9 @@ ul.check li { margin: 4px 0; }
       ' 角加速度の上限はモーターのトルクで決まる。わからなければ今調整済みのターンで使っている最大値を入れる。' +
       ' k は分からなければ 0 のままでよい(手順4で実測から求める)。</p>' +
       '<h3>前距離の下限 [mm]</h3>' +
-      '<p class="note">区画端(ターンに入る区画の境界)から、実際に曲がり始められる一番手前の位置(前距離の下限)。壁切れを検出してから曲がる場合は、その検出位置を入れる。' +
+      '<p class="note">ターン区間の始まりから、実際に曲がり始められる一番手前の位置(前距離の下限)。壁切れを検出してから曲がる場合は、その検出位置を入れる。' +
       ' 初期値は KOGUMA(クラシック)の調整結果から逆算した目安(ハーフは半分)なので、自分の機体の値に置き換える。</p>' +
-      '<div class="tablewrap"><table><tr><th>ターン</th><th>前距離の下限 [mm]</th><th style="text-align:left">区画端の位置</th></tr>' + rows + '</table></div>' +
+      '<div class="tablewrap"><table><tr><th>ターン</th><th>前距離の下限 [mm]</th><th style="text-align:left">ターン区間の始まり</th></tr>' + rows + '</table></div>' +
       '<div class="row"><button class="primary" id="btnSetup">この設定で全ターンを作り直す</button></div>' +
       '<p class="note">区画 ' + C0 + ' mm。設定はサイズごとに別々に保存される。</p>' +
       nextPrev();
@@ -459,7 +456,7 @@ ul.check li { margin: 4px 0; }
       m.wacMax = num('inWac', m.wacMax); m.minEnd = num('inMinEnd', m.minEnd); m.k = num('inK', m.k);
       document.querySelectorAll('[data-minst]').forEach(function (el) {
         var t = el.getAttribute('data-minst'); var x = parseFloat(el.value);
-        if (!isNaN(x)) m.turns[t].minSt = x - FE(t);
+        if (!isNaN(x)) m.turns[t].minSt = x;
       });
       var bad = [];
       T.TURNS.forEach(function (t) { m.turns[t].v = v; });
@@ -601,11 +598,11 @@ ul.check li { margin: 4px 0; }
       var m = M(), t = m.fixTurn, p = m.turns[t];
       var a = parseFloat($('fxAlong').value) || 0, l = parseFloat($('fxLat').value) || 0;
       var q = T.correctOffsets(t, C(), p, a, l);
-      var html = '<div class="kv"><span>前距離</span><span>' + fx(front(t, p.st)) + ' → <b>' + fx(front(t, q.st)) + '</b> mm (変化量 ' + sg(q.st - p.st) + ')</span>' +
+      var html = '<div class="kv"><span>前距離</span><span>' + fx(p.st) + ' → <b>' + fx(q.st) + '</b> mm (変化量 ' + sg(q.st - p.st) + ')</span>' +
         '<span>後距離</span><span>' + fx(p.end) + ' → <b>' + fx(q.end) + '</b> mm (変化量 ' + sg(q.end - p.end) + ')</span></div>';
       if (q.latLeft) html += '<div class="box warn">横のずれ ' + sg(q.latLeft) + ' mm は前後の距離では直せない。角速度を調整する。</div>';
-      if (front(t, q.st) < 0 || q.end < 0) html += '<div class="box bad">距離が負になる。このずれは前後の距離では吸収できないので、手順5(または8)で角速度・角加速度から作り直す。</div>';
-      else if (q.st < p.minSt) html += '<div class="box warn">前距離が下限 (' + fx(front(t, p.minSt)) + ' mm) より短くなる。壁切れで曲がり始める機体では実現できない。</div>';
+      if (q.st < 0 || q.end < 0) html += '<div class="box bad">距離が負になる。このずれは前後の距離では吸収できないので、手順5(または8)で角速度・角加速度から作り直す。</div>';
+      else if (q.st < p.minSt) html += '<div class="box warn">前距離が下限 (' + fx(p.minSt) + ' mm) より短くなる。壁切れで曲がり始める機体では実現できない。</div>';
       html += '<div class="row"><button class="primary" id="btnFixApply">この値にする</button></div>';
       $('fixres').innerHTML = html;
       $('btnFixApply').onclick = function () { p.st = q.st; p.end = q.end; m.done[5] = true; save(); render(); };
@@ -688,7 +685,7 @@ ul.check li { margin: 4px 0; }
     var rows = order.map(function (t) {
       var p = m.turns[t], r = evalTurn(t);
       return '<tr><td>' + name(t) + '</td><td><input type="number" step="50" data-ov="' + t + '" value="' + fx(p.v, 0) + '"></td>' +
-        '<td>' + fx(r.aLat) + '</td><td>' + fx(p.wMax, 0) + '</td><td>' + fx(p.wAc, 0) + '</td><td>' + fx(front(t, p.st)) + '</td><td>' + fx(p.end) + '</td></tr>';
+        '<td>' + fx(r.aLat) + '</td><td>' + fx(p.wMax, 0) + '</td><td>' + fx(p.wAc, 0) + '</td><td>' + fx(p.st) + '</td><td>' + fx(p.end) + '</td></tr>';
     }).join('');
     return head('sim', '他のターンを作る',
       '合わせた k を使って、残りのターンをシミュレーター上で作る。実機で全部を合わせ直す必要はない。') +
@@ -792,7 +789,7 @@ ul.check li { margin: 4px 0; }
     var ref = refAccel();
     var use = r.aTot / ref.a;
     function inp(key, step, label) {
-      var val = key === 'st' ? front(t, p.st) : p[key];
+      var val = p[key];
       return '<label class="f">' + label + '<input type="number" step="' + step + '" data-free="' + key + '" value="' + fx(val, key === 'st' || key === 'end' ? 1 : 0) + '"></label>';
     }
     var rc = evalTurn(t);
@@ -803,10 +800,10 @@ ul.check li { margin: 4px 0; }
       '<button id="freeLoad">ターン一覧から読み込む</button></div>' +
       '<div class="row">' + inp('v', 50, '入口・出口の速度 [mm/s]') + inp('vMid', 50, '最低速度 [mm/s]') +
       inp('wMax', 25, '最大角速度 [deg/s]') + inp('wAc', 5000, '角加速度 [deg/s²]') + '</div>' +
-      '<div class="row">' + inp('st', 0.5, '前距離 [mm](区画端から)') + inp('end', 0.5, '後距離 [mm](ターン直後から)') +
+      '<div class="row">' + inp('st', 0.5, '前距離 [mm](ターン区間の始まりから)') + inp('end', 0.5, '後距離 [mm](ターン直後から)') +
       '<button id="freeSolve">前距離・後距離を自動で合わせる</button><button class="primary" id="freeApply">ターン一覧に反映</button></div>' +
       '<div class="kv">' +
-      '<span>通過時間</span><span>' + fx((r.time + FE(t) / p.v) * 1000, 2) + ' ms(区画端→理想の終了点。一覧の値: ' + fx((rc.time + FE(t) / M().turns[t].v) * 1000, 2) + ' ms)</span>' +
+      '<span>通過時間</span><span>' + fx(r.time * 1000, 2) + ' ms(ターン区間の始まり→理想の終了点。一覧の値: ' + fx(rc.time * 1000, 2) + ' ms)</span>' +
       '<span>ピーク加速度</span><span>横 ' + fx(r.aLat) + ' / 前後 ' + fx(r.aLong) + ' / 合成 <b>' + fx(r.aTot) + '</b> m/s²</span>' +
       '<span>グリップの使用率</span><span>' + fx(use * 100, 0) + ' %(基準 ' + fx(ref.a) + ' m/s²: ' + (ref.manual ? '手入力' : '手順で合わせた斜め入り45') + ')' +
       '<div class="bar' + (use > 1 ? ' over' : '') + '"><i style="width:' + Math.min(100, use * 100).toFixed(0) + '%"></i></div></span>' +
@@ -858,7 +855,7 @@ ul.check li { margin: 4px 0; }
         var key = el.getAttribute('data-free'), v = parseFloat(el.value);
         if (isNaN(v) || (key !== 'st' && key !== 'end' && v <= 0)) return;
         if (key === 'v' && f.p.vMid === f.p.v) f.p.vMid = v; // 一定速度のまま動かす
-        f.p[key] = key === 'st' ? v - FE(f.turn) : v; save(); render();
+        f.p[key] = v; save(); render();
       };
     });
     $('freeSolve').onclick = function () {
@@ -885,7 +882,7 @@ ul.check li { margin: 4px 0; }
       if (r === undefined) cells = '<td colspan="7" class="note" style="text-align:left">未探索</td>';
       else if (r === null) cells = '<td colspan="7" style="text-align:left;color:var(--bad)">' + fx(o.vLo, 0) + ' mm/s でも作れない</td>';
       else cells = '<td><b>' + fx(r.v, 0) + '</b></td><td>' + sg((r.v / p.v - 1) * 100, 0) + ' %</td><td>' + fx(r.wMax, 0) + '</td><td>' + fx(r.wAc, 0) +
-        '</td><td>' + fx(front(t, r.st)) + ' / ' + fx(r.end) + '</td><td>' + fx(r.aTot) + '</td><td>' + fx((cur.time + FE(t) / p.v) * 1000, 1) + ' → ' + fx((r.time + FE(t) / r.v) * 1000, 1) + '</td>';
+        '</td><td>' + fx(r.st) + ' / ' + fx(r.end) + '</td><td>' + fx(r.aTot) + '</td><td>' + fx(cur.time * 1000, 1) + ' → ' + fx(r.time * 1000, 1) + '</td>';
       return '<tr><td><label><input type="checkbox" data-osel="' + t + '"' + (r && o.sel[t] !== false ? ' checked' : '') + (r ? '' : ' disabled') + '> ' + name(t) + '</label></td>' +
         '<td>' + fx(p.v, 0) + '</td>' + cells + '</tr>';
     }).join('');
@@ -957,11 +954,10 @@ ul.check li { margin: 4px 0; }
       var e = tr[tr.length - 1]; return [e[0] + L * Math.cos(ea), e[1] + L * Math.sin(ea)];
     };
     var idealStop = [g.end[0] + L * Math.cos(ea), g.end[1] + L * Math.sin(ea)];
-    // 区画端(前距離の基準)
-    var off = FE(t), edge = [g.start[0] - off * Math.cos(sa), g.start[1] - off * Math.sin(sa)];
+    // ターン区間の始まり(前距離の基準)
+    var edge = [g.start[0], g.start[1]];
     var nx = -Math.sin(sa), ny = Math.cos(sa), tk = 0.28 * C0;
-    tr0.unshift(edge); tr1.unshift(edge); // 前距離は区画端から
-    var lp = [edge[0] + (tk + 0.2 * C0) * nx, edge[1] + (tk + 0.2 * C0) * ny];
+    var lp = [edge[0] - 0.13 * C0 * Math.cos(sa), edge[1] - 0.13 * C0 * Math.sin(sa)]; // 目印の少し手前に文字
     var pts = tr0.concat(tr1, [edge, lp, [edge[0] - tk * nx, edge[1] - tk * ny], [g.start[0] - 0.4 * C0 * Math.cos(sa), g.start[1] - 0.4 * C0 * Math.sin(sa)], g.end,
       [g.end[0] + 0.4 * C0 * Math.cos(ea), g.end[1] + 0.4 * C0 * Math.sin(ea)]]);
     if (showTest) pts.push(idealStop, ext(tr0), ext(tr1));
@@ -990,7 +986,7 @@ ul.check li { margin: 4px 0; }
     out.push(line([g.end[0] - far * Math.cos(ea), g.end[1] - far * Math.sin(ea)], [g.end[0] + far * Math.cos(ea), g.end[1] + far * Math.sin(ea)],
       'stroke="var(--ideal)" stroke-dasharray="6 4" stroke-width="1.2"'));
     out.push(line([edge[0] - tk * nx, edge[1] - tk * ny], [edge[0] + tk * nx, edge[1] + tk * ny], 'stroke="var(--ink)" stroke-width="2.5"'));
-    out.push('<text x="' + X(lp) + '" y="' + Y(lp) + '" font-size="12" fill="var(--sub)" text-anchor="middle" dominant-baseline="middle">区画端</text>');
+    out.push('<text x="' + X(lp) + '" y="' + Y(lp) + '" font-size="12" fill="var(--sub)" text-anchor="middle" dominant-baseline="middle">ターン区間の始まり</text>');
     out.push(poly(tr0, 'stroke="var(--sim0)" stroke-width="2"'));
     out.push(poly(tr1, 'stroke="var(--sim)" stroke-width="2.4"'));
     if (showTest) {
@@ -1017,7 +1013,7 @@ ul.check li { margin: 4px 0; }
     T.TURNS.forEach(function (t) {
       var p = m.turns[t], r = evalTurn(t);
       function inp(key, step) {
-        var val = key === 'vMid' && p.vMid == null ? p.v : key === 'st' ? front(t, p.st) : p[key];
+        var val = key === 'vMid' && p.vMid == null ? p.v : p[key];
         return '<td><input type="number" step="' + step + '" data-tk="' + t + ':' + key + '" value="' + fx(val, key === 'st' || key === 'end' ? 1 : 0) + '"></td>';
       }
       var bad = Math.abs(r.along) > 1 || Math.abs(r.lat) > 1;
@@ -1036,7 +1032,6 @@ ul.check li { margin: 4px 0; }
         if (!isNaN(v) && (free || v > 0)) {
           var p = M().turns[kk[0]];
           if (kk[1] === 'vMid') p.vMid = v === p.v ? null : v;
-          else if (kk[1] === 'st') p.st = v - FE(kk[0]);
           else p[kk[1]] = v;
           save(); render();
         }
@@ -1103,14 +1098,14 @@ ul.check li { margin: 4px 0; }
     var m = M(), lines = [];
     lines.push('/* ターンシミュレーターの出力 (' + T.SIZES[state.size].label + '、区画' + C() + 'mm、k=' + fx(m.k, 4) + ' deg/(m/s^2))');
     lines.push(' * 左ターンの値。右ターンは角度の符号を反転する。');
-    lines.push(' * offset_st(前距離) は区画端(ターンに入る区画の境界。斜め出・V90 は斜めの壁の中点)から曲がり始めるまでの距離[mm]、');
+    lines.push(' * offset_st(前距離) はターン区間の始まり(大回り・斜め入りは区画の中心、斜め出・V90 は斜めの壁の中点)から曲がり始めるまでの距離[mm]、');
     lines.push(' * offset_end(後距離) は曲がり終わった直後から直進する距離[mm]。');
     lines.push(' * v_mid はターン中の最低速度(v と同じなら速度一定)。速度の目標は v - (v - v_mid) * ω / w_max で動かす。');
     lines.push(' * 壁切れ込みでオフセットを持つ機体は、その分を換算すること。 */');
     lines.push('/*            v     v_mid   angle  w_max     w_ac    offset_st offset_end */');
     T.TURNS.forEach(function (t) {
       var p = m.turns[t], g = T.geometry(t, C());
-      lines.push('/* ' + name(t) + ' */ {' + [fx(p.v, 0), fx(p.vMid == null ? p.v : p.vMid, 0), g.angle, fx(p.wMax, 0), fx(p.wAc, 0), fx(front(t, p.st), 1), fx(p.end, 1)]
+      lines.push('/* ' + name(t) + ' */ {' + [fx(p.v, 0), fx(p.vMid == null ? p.v : p.vMid, 0), g.angle, fx(p.wMax, 0), fx(p.wAc, 0), fx(p.st, 1), fx(p.end, 1)]
         .map(function (s) { return String(s).padStart(7); }).join(', ') + '},');
     });
     return lines.join('\n');

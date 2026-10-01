@@ -54,13 +54,6 @@
     throw new Error('unknown turn: ' + turn);
   }
 
-  /* 区画端(ターンに入る区画の境界)から理想のターン開始点までの距離。
-   * 大回り・斜め入りは区画中心から始まるので半区画、斜め出・V90 は境界上から始まるので 0。
-   * 前距離(区画端から曲がり始めるまで) = st + edgeOffset */
-  function edgeOffset(turn, C) {
-    return /^(out|v90)/.test(turn) ? 0 : C / 2;
-  }
-
   /* 開始姿勢を原点・前を+x・左を+yとした座標での理想の終点 [前, 左, 角度] */
   function idealLocal(turn, C) {
     var g = geometry(turn, C);
@@ -393,7 +386,7 @@
 
   return {
     SIZES: SIZES, TURNS: TURNS, TURN_NAMES: TURN_NAMES,
-    geometry: geometry, edgeOffset: edgeOffset, idealLocal: idealLocal, toGlobal: toGlobal,
+    geometry: geometry, idealLocal: idealLocal, toGlobal: toGlobal,
     omegaProfile: omegaProfile, runTurn: runTurn, exitError: exitError, evaluate: evaluate,
     solveOffsets: solveOffsets, correctOffsets: correctOffsets, design: design, maxSpeed: maxSpeed, maxSpeedSearch: maxSpeedSearch, fitK: fitK,
     scaleSpeed: scaleSpeed, stats: stats
