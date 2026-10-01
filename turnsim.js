@@ -4,7 +4,9 @@
  * ブラウザでは window.TurnSim、Node では require('./turnsim.js') で使う。
  *
  * モデル
- *  - 並進速度 v はターン中一定
+ *  - 重心速度は入口・出口が v で、ターン中は角速度に連動して変えられる
+ *        v(t) = v - (v - vMid) * ω(t) / ω_peak
+ *    (角速度が最大のときに最低速度 vMid。vMid を省略すると v のまま一定)
  *  - 角速度 ω(t) は cos 型の加速 -> 等角速度 -> cos 型の減速
  *    (角度が足りないときは等角速度なしの三角形。ピーク角速度は自動で下がる)
  *  - 機体の向きはジャイロ制御で ω(t) どおりに回る
@@ -85,12 +87,23 @@
         var tt = t - t1 - tc;
         if (tt < t1) return wMax / 2 * (1 + Math.cos(Math.PI * tt / t1));
         return 0;
+      },
+      /* 角加速度 [deg/s^2] */
+      dw: function (t) {
+        if (t < t1) return wAc * Math.sin(Math.PI * t / t1);
+        if (t < t1 + tc) return 0;
+        var tt = t - t1 - tc;
+        if (tt < t1) return -wAc * Math.sin(Math.PI * tt / t1);
+        return 0;
       }
     };
   }
 
-  /* 左ターンを走らせる。p = {v, wMax, wAc, st, end}, angle[deg], k
-   * 戻り値は開始姿勢基準の座標 {x, y, aLat, peak, trace} */
+  /* 左ターンを走らせる。p = {v, vMid(省略可), wMax, wAc, st, end}, angle[deg], k
+   * 戻り値は開始姿勢基準の座標と、
+   *   aLat: ピーク横加速度, aLong: ピーク前後加速度(絶対値), aTot: ピーク合成加速度(摩擦円) [m/s^2]
+   *   peak: ピーク角速度, tTurn: 旋回の時間, time: 理想の開始点から終了点までの時間 [s]
+   *   series: opt.series のとき [t, v, aLat, aLong, aTot] の列 */
   function runTurn(p, angle, k, opt) {
     opt = opt || {};
     var dt = opt.dt || 1e-5;
@@ -100,24 +113,38 @@
     var prof = omegaProfile(angle, p.wMax, p.wAc);
     var n = Math.max(1, Math.ceil(prof.tEnd / dt));
     var h = prof.tEnd / n;
-    var vm = p.v / 1000;
+    var v0 = p.v, dv = v0 - (p.vMid == null ? v0 : p.vMid);
+    var series = opt.series ? [] : null;
     var every = Math.max(1, Math.floor(n / 200));
+    var aLat = 0, aLong = 0, aTot = 0;
     for (var i = 0; i < n; i++) {
-      var wd = prof.w((i + 0.5) * h);
+      var tm = (i + 0.5) * h;
+      var wd = prof.w(tm);
+      var v = v0 - dv * wd / prof.peak;
+      var al = v / 1000 * wd * D2R;                       // 横加速度 [m/s^2]
+      var ax = -dv * prof.dw(tm) / prof.peak / 1000;       // 前後加速度 [m/s^2]
+      var at = Math.sqrt(al * al + ax * ax);
+      if (al > aLat) aLat = al;
+      if (Math.abs(ax) > aLong) aLong = Math.abs(ax);
+      if (at > aTot) aTot = at;
       var thm = th + wd * D2R * h / 2;
-      var beta = k * vm * wd * D2R * D2R; // k[deg/(m/s^2)] * a_lat -> rad
+      var beta = k * al * D2R; // k[deg/(m/s^2)] * a_lat -> rad
       var phi = thm - beta; // 外側(右)にずれる
-      x += p.v * Math.cos(phi) * h;
-      y += p.v * Math.sin(phi) * h;
+      x += v * Math.cos(phi) * h;
+      y += v * Math.sin(phi) * h;
       th += wd * D2R * h;
       if (trace && i % every === 0) trace.push([x, y]);
+      if (series && i % every === 0) series.push([tm, v, al, ax, at]);
     }
     th = angle * D2R; // 角度はジャイロ制御で合う
     if (trace) trace.push([x, y]);
     x += p.end * Math.cos(th);
     y += p.end * Math.sin(th);
     if (trace) trace.push([x, y]);
-    return { x: x, y: y, aLat: vm * prof.peak * D2R, peak: prof.peak, trace: trace };
+    return {
+      x: x, y: y, aLat: aLat, aLong: aLong, aTot: aTot, peak: prof.peak, trace: trace, series: series,
+      tTurn: prof.tEnd, time: (p.st + p.end) / v0 + prof.tEnd
+    };
   }
 
   /* 理想の終点からのずれを、出口の向きの [前後, 横] で返す(横は旋回の内側が+) */
@@ -142,7 +169,7 @@
   function solveOffsets(turn, C, p, k, opt) {
     var g = geometry(turn, C);
     var e = idealLocal(turn, C);
-    var q = { v: p.v, wMax: p.wMax, wAc: p.wAc, st: 0, end: 0 };
+    var q = { v: p.v, vMid: p.vMid, wMax: p.wMax, wAc: p.wAc, st: 0, end: 0 };
     var r = runTurn(q, g.angle, k, opt);
     var a = e[2] * D2R;
     var s = Math.sin(a);
@@ -179,6 +206,7 @@
     var best = null;
     var wStep = 25, wacStep = 5000;
     var wTop = 12000;
+    if (Math.abs(Math.sin(e[2] * D2R)) < 1e-6) return design180(turn, C, c);
     for (var w = 100; w <= wTop; w += wStep) {
       // ピーク横加速度は v*ω で決まる。すでに最良より大きければ打ち切り
       if (best && (c.v / 1000) * w * D2R > best.aLat + 1e-9) break;
@@ -211,6 +239,70 @@
     return best;
   }
 
+  /* 180度: 横の位置は角速度だけで決まる(前後のオフセットは平行で効かない)ので、
+   * 角加速度ごとに横ずれが0になる角速度を二分法で求め、横加速度が最小のものを取る */
+  function design180(turn, C, c) {
+    var g = geometry(turn, C);
+    var e = idealLocal(turn, C);
+    function lat(w, wac) {
+      return runTurn({ v: c.v, wMax: w, wAc: wac, st: 0, end: 0 }, g.angle, c.k, { dt: 2e-4 }).y - e[1];
+    }
+    var best = null;
+    for (var wac = 5000; wac <= c.wacMax + 1e-9; wac += 5000) {
+      // 角速度を上げると旋回半径が小さくなり、横の移動量が減る
+      var lo = 50, hi = 20000;
+      if (lat(lo, wac) < 0 || lat(hi, wac) > 0) continue;
+      for (var i = 0; i < 40; i++) {
+        var mid = (lo + hi) / 2;
+        if (lat(mid, wac) > 0) lo = mid; else hi = mid;
+      }
+      var w = (lo + hi) / 2;
+      var p = { v: c.v, wMax: w, wAc: wac, st: c.minSt, end: 0 };
+      var r = runTurn(p, g.angle, c.k, { dt: 2e-4 });
+      if (Math.abs(r.y - e[1]) > 0.5) continue; // 三角形で頭打ちになり届かない
+      var end = c.minSt + (r.x - c.minSt) - e[0];
+      var st = c.minSt;
+      if (end < c.minEnd) { st += c.minEnd - end; end = c.minEnd; }
+      var prof = omegaProfile(g.angle, w, wac);
+      var aLat = (c.v / 1000) * prof.peak * D2R;
+      if (!best || aLat < best.aLat - 1e-9) {
+        best = { v: c.v, wMax: w, wAc: wac, st: st, end: end, aLat: aLat, peak: prof.peak };
+      }
+    }
+    if (!best) return null;
+    var fin = solveOffsets(turn, C, best, c.k, { st180: best.st });
+    best.st = fin.st;
+    best.end = fin.end;
+    return best;
+  }
+
+  /* 合成加速度が aLim 以下で作れる一番速い速度を探す(速度一定のターン、二分探索)。
+   * c = {k, minSt, minEnd, wacMax, aLim, vLo, vHi, step}
+   * 各速度で横加速度が最小になるパラメータ(design)を作り、それが aLim 以下なら作れる */
+  function maxSpeed(turn, C, c) {
+    function solve(v) {
+      var d = design(turn, C, { v: v, k: c.k, minSt: c.minSt, minEnd: c.minEnd, wacMax: c.wacMax });
+      if (!d) return null;
+      var r = evaluate(turn, C, d, c.k, { dt: 1e-4 });
+      if (r.aTot > c.aLim) return null;
+      d.time = r.time; d.aTot = r.aTot;
+      return d;
+    }
+    var step = c.step || 10;
+    var lo = c.vLo, hi = c.vHi;
+    var best = solve(lo);
+    if (!best) return null;
+    var top = solve(hi);
+    if (top) return top;
+    while (hi - lo > step) {
+      var mid = Math.round((lo + hi) / 2 / step) * step;
+      if (mid <= lo || mid >= hi) break;
+      var r = solve(mid);
+      if (r) { lo = mid; best = r; } else { hi = mid; }
+    }
+    return best;
+  }
+
   /* 停止位置テストの横ずれ(実測、内側+)に合う k を求める */
   function fitK(turn, C, p, measuredLat) {
     function f(k) { return evaluate(turn, C, p, k, { dt: 1e-4 }).lat - measuredLat; }
@@ -227,7 +319,9 @@
   /* 速度を変えたときの換算(滑りがなければ同じ軌跡になる) */
   function scaleSpeed(p, v) {
     var s = v / p.v;
-    return { v: v, wMax: p.wMax * s, wAc: p.wAc * s * s, st: p.st, end: p.end };
+    var q = { v: v, wMax: p.wMax * s, wAc: p.wAc * s * s, st: p.st, end: p.end };
+    if (p.vMid != null) q.vMid = p.vMid * s;
+    return q;
   }
 
   function stats(values) {
@@ -242,7 +336,7 @@
     SIZES: SIZES, TURNS: TURNS, TURN_NAMES: TURN_NAMES,
     geometry: geometry, idealLocal: idealLocal, toGlobal: toGlobal,
     omegaProfile: omegaProfile, runTurn: runTurn, exitError: exitError, evaluate: evaluate,
-    solveOffsets: solveOffsets, correctOffsets: correctOffsets, design: design, fitK: fitK,
+    solveOffsets: solveOffsets, correctOffsets: correctOffsets, design: design, maxSpeed: maxSpeed, fitK: fitK,
     scaleSpeed: scaleSpeed, stats: stats
   };
 });

@@ -104,5 +104,55 @@ for (const size of Object.keys(T.SIZES)) {
   check(near(a.along, b.along, 0.05) && near(a.lat, b.lat, 0.05), '速度の換算');
 }
 
+// 11. ターン中の速度変化: vMid=v は速度一定と同じ。vMid<v で前後加速度が出て、横加速度は下がる
+{
+  const p = { v: 2000, wMax: 1500, wAc: 60000, st: 30, end: 40 };
+  const a = T.evaluate('big90', 180, p, 0.1), b = T.evaluate('big90', 180, { ...p, vMid: 2000 }, 0.1);
+  check(a.x === b.x && a.y === b.y && b.aLong === 0, 'vMid=v が速度一定と一致しない');
+  const c = T.evaluate('big90', 180, { ...p, vMid: 1600 }, 0.1);
+  check(c.aLong > 0 && c.aLat < a.aLat && c.aTot >= c.aLat, `vMid<v の加速度 ${c.aLong}, ${c.aLat}`);
+  // 横加速度のピークは ω が最大のとき v=vMid: vMid*ω
+  const pk = T.omegaProfile(90, 1500, 60000).peak;
+  check(near(c.aLat, 1.6 * pk * Math.PI / 180, 0.05), `vMid のときの横加速度 ${c.aLat}`);
+}
+
+// 11b. ターン中に減速しても、解いたオフセットで理想の線に乗る
+for (const t of ['big90', 'in45', 'v90', 'out135']) {
+  const p = { v: 1800, vMid: 1400, wMax: 1300, wAc: 120000, st: 0, end: 0 };
+  const sol = T.solveOffsets(t, 180, p, 0.1);
+  const r = T.evaluate(t, 180, { ...p, st: sol.st, end: sol.end }, 0.1);
+  check(near(r.along, 0, 0.1) && near(r.lat, 0, 0.1), `${t}: 減速ありのオフセットでずれる (${r.along.toFixed(2)}, ${r.lat.toFixed(2)})`);
+  const q = T.correctOffsets(t, 180, { ...p, st: 20, end: 30 }, 3, -2);
+  check(isFinite(q.st) && isFinite(q.end), `${t}: 減速ありの修正`);
+}
+
+// 12. 180度は角速度の二分法で横ずれ0になる(低速でも)
+for (const size of Object.keys(T.SIZES)) {
+  const C = T.SIZES[size].cell;
+  for (const v of [400, 1000, 2000]) {
+    const d = T.design('big180', C, { v, k: 0.1, minSt: C * 0.2, minEnd: C * 0.03, wacMax: 200000 });
+    check(d !== null, `${size} big180 v=${v}: 解なし`);
+    if (!d) continue;
+    const r = T.evaluate('big180', C, d, 0.1);
+    check(near(r.along, 0, 0.1) && near(r.lat, 0, 0.1), `${size} big180 v=${v}: ずれ (${r.along.toFixed(2)}, ${r.lat.toFixed(2)})`);
+  }
+}
+
+// 13. maxSpeed: 見つけた速度は上限以内で、少し速くすると上限を超える(作れない)
+{
+  const C = 180, base = { k: 0.1, minSt: 37, minEnd: 5, wacMax: 130000 };
+  const ref = T.design('in45', C, { ...base, v: 1800 });
+  const aLim = T.evaluate('in45', C, ref, 0.1).aTot;
+  for (const t of ['in45', 'big90', 'big180']) {
+    const m = T.maxSpeed(t, C, { ...base, aLim, vLo: 500, vHi: 5000, step: 10 });
+    check(m && m.aTot <= aLim + 1e-6, `${t}: maxSpeed が上限超え`);
+    if (!m) continue;
+    const d = T.design(t, C, { ...base, v: m.v + 20 });
+    const over = !d || T.evaluate(t, C, d, 0.1).aTot > aLim;
+    check(over, `${t}: ${m.v}+20 でも作れる(最高速度になっていない)`);
+    if (t === 'in45') check(Math.abs(m.v - 1800) <= 10, `in45 自身の最高速度 ${m.v} が基準の 1800 と違う`);
+  }
+}
+
 console.log(fails ? `${fails}件の失敗` : 'OK');
 process.exit(fails ? 1 : 0);
