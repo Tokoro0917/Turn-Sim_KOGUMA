@@ -101,6 +101,15 @@ input, select, textarea { font: inherit; color: var(--ink); background: var(--bg
 input[type=number] { width: 110px; }
 textarea { width: 100%; min-height: 110px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
 .note { font-size: 13px; color: var(--sub); }
+div.f { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--sub); margin: 8px 0; }
+.dirin { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--ink); }
+.dirin .seg button, div.f .seg button { padding: 4px 12px; font-size: 14px; }
+div.f > .seg { align-self: flex-start; }
+.meas { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; }
+.measfig { width: 240px; max-width: 100%; height: auto; background: var(--bg); border-radius: 8px; }
+.replist { margin: 6px 0; padding-left: 1.6em; font-size: 14px; }
+.replist button { margin-left: 8px; }
+small.dw { font-size: 12px; color: var(--sub); font-weight: normal; }
 .box { border-radius: 8px; padding: 10px 12px; margin: 10px 0; font-size: 14px; }
 .box.ok { background: var(--ok-soft); color: var(--ok); }
 .box.warn { background: var(--warn-soft); color: var(--warn); }
@@ -245,6 +254,20 @@ ul.check li { margin: 4px 0; }
   function $(id) { return document.getElementById(id); }
   function fx(x, d) { return (x == null || isNaN(x)) ? '-' : Number(x).toFixed(d == null ? 1 : d); }
   function sg(x, d) { return (x >= 0 ? '+' : '') + fx(x, d); }
+  /* ずれは画面では符号でなく向きの言葉で書く(内部の符号: 前後は行き過ぎが+、横は内側が+) */
+  var ALONG_W = ['行き過ぎ', '手前'], LAT_W = ['内側', '外側'];
+  function dirWord(x, d, w) {
+    if (x == null || isNaN(x) || Math.abs(x) < 0.5 * Math.pow(10, -(d == null ? 1 : d))) return '';
+    return x > 0 ? w[0] : w[1];
+  }
+  function dTxt(x, w, d) { return (x == null || isNaN(x)) ? '-' : (dirWord(x, d, w) + ' ' + fx(Math.abs(x), d) + ' mm').trim(); }
+  function dAlong(x, d) { return dTxt(x, ALONG_W, d); }
+  function dLat(x, d) { return dTxt(x, LAT_W, d); }
+  /* 表やタイル用の短い形(単位なし) */
+  function dShort(x, w, d) {
+    var word = dirWord(x, d, w);
+    return fx(Math.abs(x), d) + (word ? ' <small class="dw">' + word + '</small>' : '');
+  }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function name(t) { return T.TURN_NAMES[t]; }
   function num(id, def) { var v = parseFloat($(id).value); return isNaN(v) ? def : v; }
@@ -500,14 +523,98 @@ ul.check li { margin: 4px 0; }
     var into = /^(in|v90)/.test(t) ? '斜め直線' : '直線';
     return '<div class="path">加速の直線 → <b>' + name(t) + '</b> → ' + into + ' ' + fx(M().testLen, 0) + ' mm で減速して停止</div>';
   }
+  /* ずれの入力: 向きはボタンで選び、量は 0 以上で入れる。右に図を出して、止まった位置を描く */
+  function dirField(id, label, val, w) {
+    var s = (val == null || val === 0) ? 0 : (val > 0 ? 1 : -1);
+    return '<div class="f"><span>' + label + '</span><div class="dirin">' +
+      '<div class="seg" id="' + id + 'Dir">' +
+      '<button type="button" data-dir="1"' + (s > 0 ? ' class="on"' : '') + '>' + w[0] + '</button>' +
+      '<button type="button" data-dir="-1"' + (s < 0 ? ' class="on"' : '') + '>' + w[1] + '</button></div>' +
+      '<input type="number" min="0" step="0.5" id="' + id + '" value="' + (val == null ? '' : Math.abs(val)) + '"><span>mm</span></div></div>';
+  }
   function measureInputs(prefix, mm) {
     mm = mm || {};
-    return '<div class="row">' +
-      '<label class="f">前後のずれ [mm] (行き過ぎが+)<input type="number" step="0.5" id="' + prefix + 'Along" value="' + (mm.along == null ? '' : mm.along) + '"></label>' +
-      '<label class="f">横のずれ [mm] (内側が+ / 外側が−)<input type="number" step="0.5" id="' + prefix + 'Lat" value="' + (mm.lat == null ? '' : mm.lat) + '"></label>' +
-      '</div>' +
-      '<p class="note">ずれは「シミュレーターが滑りなしで予想した停止位置」ではなく「理想の停止位置(理想の出口の線上で、直線の長さ分進んだ点)」からの、' +
-      '出口の向きで見た値。内側 = 曲がった側(左ターンなら左)。外側に膨らんだら横はマイナス。</p>';
+    var side = state.measSide === 'R' ? 'R' : 'L';
+    return '<div class="meas"><div>' +
+      '<div class="f"><span>機体が曲がった向き(図の向きだけ変わる)</span><div class="seg" id="' + prefix + 'Side">' +
+      '<button type="button" data-side="L"' + (side === 'L' ? ' class="on"' : '') + '>左ターン</button>' +
+      '<button type="button" data-side="R"' + (side === 'R' ? ' class="on"' : '') + '>右ターン</button></div></div>' +
+      dirField(prefix + 'Along', '前後のずれ', mm.along, ALONG_W) +
+      dirField(prefix + 'Lat', '横のずれ', mm.lat, LAT_W) +
+      '<div class="note" id="' + prefix + 'Sum"></div>' +
+      '</div><svg class="measfig" id="' + prefix + 'Fig" viewBox="0 0 240 220" role="img" aria-label="ずれの向きの図"></svg></div>' +
+      '<p class="note">理想の停止位置(理想の出口の線上で、直線の長さ分進んだ点)から、止まった位置までのずれ。' +
+      '「シミュレーターが滑りなしで予想した停止位置」からではない。出口の向き(斜めの直線の進む向き)で見て、' +
+      '<b>内側</b> = 曲がった側(左ターンなら左)、<b>外側</b> = 膨らんだ側。タイヤが滑ると外側にずれる。ずれがなければ 0 を入れる(向きは選ばなくてよい)。</p>';
+  }
+  /* 入力欄の値を符号付きで読む。空なら null。量があって向きがなければ err */
+  function readDir(id, label, w) {
+    var raw = $(id).value.trim();
+    if (raw === '') return { v: null };
+    var a = parseFloat(raw);
+    if (isNaN(a) || a < 0) return { err: label + 'の量は 0 以上の数で入れる(向きはボタンで選ぶ)' };
+    if (a === 0) return { v: 0 };
+    var on = document.querySelector('#' + id + 'Dir button.on');
+    if (!on) return { err: label + 'の向き(' + w[0] + ' / ' + w[1] + ')を選ぶ' };
+    return { v: a * +on.getAttribute('data-dir') };
+  }
+  function readMeasure(prefix) {
+    var a = readDir(prefix + 'Along', '前後のずれ', ALONG_W), l = readDir(prefix + 'Lat', '横のずれ', LAT_W);
+    return { along: a.v, lat: l.v, err: a.err || l.err };
+  }
+  function bindMeasure(prefix) {
+    function upd() { drawMeasure(prefix); }
+    ['Along', 'Lat'].forEach(function (k) {
+      var id = prefix + k;
+      document.querySelectorAll('#' + id + 'Dir button').forEach(function (b) {
+        b.onclick = function () {
+          document.querySelectorAll('#' + id + 'Dir button').forEach(function (o) { o.classList.toggle('on', o === b); });
+          upd();
+        };
+      });
+      $(id).oninput = upd;
+    });
+    document.querySelectorAll('#' + prefix + 'Side button').forEach(function (b) {
+      b.onclick = function () {
+        state.measSide = b.getAttribute('data-side'); save();
+        document.querySelectorAll('#' + prefix + 'Side button').forEach(function (o) { o.classList.toggle('on', o === b); });
+        upd();
+      };
+    });
+    upd();
+  }
+  /* 出口の向きを上にした図。理想の停止位置を中心に、入力したずれの位置に点を打つ */
+  function drawMeasure(prefix) {
+    var svg = $(prefix + 'Fig');
+    if (!svg) return;
+    var mm = readMeasure(prefix), side = state.measSide === 'R' ? -1 : 1; // 内側が左なら +1
+    var cx = 120, cy = 100, S = 3; // 1mm = 3px(±20mm で端)
+    var o = [];
+    o.push('<line x1="20" y1="' + cy + '" x2="220" y2="' + cy + '" stroke="var(--grid)"/>');
+    // 入ってきた経路(曲がる前の向き)と理想の出口の線
+    var bx = cx - side * 70; // 左ターンは左下から来て上へ曲がる
+    o.push('<path d="M' + bx + ' 215 Q' + cx + ' 185 ' + cx + ' 160 L' + cx + ' ' + cy + '" fill="none" stroke="var(--ideal)" stroke-width="2.5"/>');
+    o.push('<line x1="' + cx + '" y1="' + cy + '" x2="' + cx + '" y2="18" stroke="var(--ideal)" stroke-width="1.5" stroke-dasharray="4 4"/>');
+    o.push('<path d="M' + cx + ' 12 l-5 9 h10 z" fill="var(--ideal)"/>');
+    o.push('<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="none" stroke="var(--ideal)" stroke-width="2"/>');
+    var t = 'font-size="12" fill="var(--sub)"';
+    o.push('<text x="' + (cx + 8) + '" y="24" ' + t + '>進む向き</text>');
+    o.push('<text x="' + (cx + 10) + '" y="' + (cy - 30) + '" ' + t + '>↑ 行き過ぎ</text>');
+    o.push('<text x="' + (cx + 10) + '" y="' + (cy + 38) + '" ' + t + '>↓ 手前</text>');
+    var inX = cx - side * 98, outX = cx + side * 98;
+    o.push('<text x="' + inX + '" y="' + (cy - 8) + '" text-anchor="middle" font-size="13" fill="var(--ink)">内側</text>');
+    o.push('<text x="' + outX + '" y="' + (cy - 8) + '" text-anchor="middle" font-size="13" fill="var(--ink)">外側</text>');
+    o.push('<text x="' + (cx - side * 10) + '" y="' + (cy + 4) + '" text-anchor="' + (side > 0 ? 'end' : 'start') + '" font-size="11" fill="var(--ideal)">理想</text>');
+    var a = mm.along || 0, l = mm.lat || 0, has = mm.along || mm.lat;
+    if (has && !mm.err) {
+      var px = cx - side * Math.max(-30, Math.min(30, l)) * S, py = cy - Math.max(-30, Math.min(30, a)) * S;
+      o.push('<line x1="' + cx + '" y1="' + cy + '" x2="' + px.toFixed(1) + '" y2="' + py.toFixed(1) + '" stroke="var(--sim)" stroke-width="1.5"/>');
+      o.push('<circle cx="' + px.toFixed(1) + '" cy="' + py.toFixed(1) + '" r="5" fill="var(--sim)"/>');
+    }
+    svg.innerHTML = o.join('');
+    var sum = $(prefix + 'Sum');
+    if (sum) sum.innerHTML = mm.err ? '<span style="color:var(--warn)">' + esc(mm.err) + '</span>'
+      : (mm.along == null && mm.lat == null) ? '' : '入力: 前後 ' + dAlong(mm.along) + '、横 ' + dLat(mm.lat) + '(図の赤い点が止まった位置)';
   }
 
   function stepStopTest() {
@@ -521,18 +628,19 @@ ul.check li { margin: 4px 0; }
       '<ul class="check"><li>手順2のパラメータを機体に書き込む</li>' +
       '<li><b>後ろの直線の壁制御を切る</b>(効いていると横ずれが補正されて見えなくなる)</li>' +
       '<li>停止位置を、理想の停止位置からのずれとして測る</li></ul>' +
-      '<div class="box info">シミュレーターの予想(今の k = ' + fx(m.k, 3) + '): 前後 ' + sg(r.along) + ' mm、横 ' + sg(r.lat) + ' mm</div>' +
+      '<div class="box info">シミュレーターの予想(今の k = ' + fx(m.k, 3) + '): 前後 ' + dAlong(r.along) + '、横 ' + dLat(r.lat) + '</div>' +
       measureInputs('st', m.measure[t]) +
       '<div class="row"><button class="primary" id="btnStopSave">測定値を記録</button></div>' + nextPrev();
   }
   function bindStopTest() {
     $('inFitTurn').onchange = function () { M().fitTurn = this.value; state.plotTurn = this.value; save(); render(); };
+    bindMeasure('st');
     $('btnStopSave').onclick = function () {
       var m = M(), t = m.fitTurn;
       m.testLen = num('inTestLen', m.testLen);
-      var a = parseFloat($('stAlong').value), l = parseFloat($('stLat').value);
-      if (isNaN(l)) { flash('横のずれを入れる', false); return; }
-      m.measure[t] = { along: isNaN(a) ? null : a, lat: l };
+      var mm = readMeasure('st');
+      if (mm.err || mm.lat == null) { showWarn(mm.err || '横のずれを入れる'); return; }
+      m.measure[t] = { along: mm.along, lat: mm.lat };
       m.done[2] = true; goStep(3);
     };
   }
@@ -545,8 +653,8 @@ ul.check li { margin: 4px 0; }
     } else {
       var k = T.fitK(t, C(), m.turns[t], meas.lat);
       var r0 = evalTurn(t, 0);
-      body = '<div class="kv"><span>測った横ずれ</span><span>' + sg(meas.lat) + ' mm</span>' +
-        '<span>滑りなしの予想</span><span>' + sg(r0.lat) + ' mm</span>' +
+      body = '<div class="kv"><span>測った横ずれ</span><span>' + dLat(meas.lat) + '</span>' +
+        '<span>滑りなしの予想</span><span>' + dLat(r0.lat) + '</span>' +
         '<span>合う k</span><span>' + (k == null ? '見つからない' : fx(k, 4) + ' deg/(m/s²)') + '</span></div>';
       if (k == null) {
         body += '<div class="box bad">k をどう変えても測定値に届かない。滑りなしの予想より内側にずれている場合は、滑り以外の原因(角度の追従不足、壁切れの位置ずれなど)を疑う。</div>';
@@ -594,13 +702,15 @@ ul.check li { margin: 4px 0; }
   }
   function bindFix() {
     $('inFixTurn').onchange = function () { M().fixTurn = this.value; state.plotTurn = this.value; save(); render(); };
+    bindMeasure('fx');
     $('btnFixCalc').onclick = function () {
       var m = M(), t = m.fixTurn, p = m.turns[t];
-      var a = parseFloat($('fxAlong').value) || 0, l = parseFloat($('fxLat').value) || 0;
-      var q = T.correctOffsets(t, C(), p, a, l);
+      var mm = readMeasure('fx');
+      if (mm.err) { showWarn(mm.err); return; }
+      var q = T.correctOffsets(t, C(), p, mm.along || 0, mm.lat || 0);
       var html = '<div class="kv"><span>前距離</span><span>' + fx(p.st) + ' → <b>' + fx(q.st) + '</b> mm (変化量 ' + sg(q.st - p.st) + ')</span>' +
         '<span>後距離</span><span>' + fx(p.end) + ' → <b>' + fx(q.end) + '</b> mm (変化量 ' + sg(q.end - p.end) + ')</span></div>';
-      if (q.latLeft) html += '<div class="box warn">横のずれ ' + sg(q.latLeft) + ' mm は前後の距離では直せない。角速度を調整する。</div>';
+      if (q.latLeft) html += '<div class="box warn">横のずれ(' + dLat(q.latLeft) + ')は前後の距離では直せない。角速度を調整する。</div>';
       if (q.st < 0 || q.end < 0) html += '<div class="box bad">距離が負になる。このずれは前後の距離では吸収できないので、手順5(または8)で角速度・角加速度から作り直す。</div>';
       else if (q.st < p.minSt) html += '<div class="box warn">前距離が下限 (' + fx(p.minSt) + ' mm) より短くなる。壁切れで曲がり始める機体では実現できない。</div>';
       html += '<div class="row"><button class="primary" id="btnFixApply">この値にする</button></div>';
@@ -626,14 +736,26 @@ ul.check li { margin: 4px 0; }
       (allOk ? '' : '<div class="box warn">ゲインを調整しても追従しない、または制御量が 100% に張り付くなら、その速度は機体として出せない。' +
         '<div class="row"><button id="btnSlower">斜め入り45 を 5% 遅くして手順2からやり直す</button></div></div>') +
       '<h3>停止位置のばらつき</h3>' +
-      '<p class="note">1回ごとに「前後 横」を1行で入れる(例: <code>1.5 -2</code>)。</p>' +
-      '<textarea id="inRepeat" placeholder="1.5 -2&#10;0.5 -1&#10;2 -3">' + esc(m.repeat || '') + '</textarea>' +
+      '<p class="note">1回走らせるごとに、止まった位置のずれを入れて「この回を追加」を押す。</p>' +
+      measureInputs('rp', null) +
+      '<div class="row"><button id="btnRepAdd">この回を追加</button></div>' +
+      repeatList() +
       '<div class="row"><label class="f">許容範囲 ± [mm]<input type="number" id="inTol" step="0.5" value="' + fx(m.tol) + '"></label>' +
       '<button class="primary" id="btnRepeat">判定</button></div>' +
       '<div id="repres">' + res + '</div>' + nextPrev();
   }
+  /* ばらつきの記録は「前後 横」(符号付き、なければ -)の行で m.repeat に持つ */
+  function repeatLines() { return (M().repeat || '').split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean); }
+  function repeatList() {
+    var lines = repeatLines();
+    if (!lines.length) return '<p class="note">まだ記録がない。</p>';
+    return '<ol class="replist">' + lines.map(function (s, i) {
+      var v = s.split(/[\s,]+/).map(parseFloat);
+      return '<li>前後 ' + dAlong(v[0]) + '、横 ' + dLat(v[1]) + ' <button class="small" data-repdel="' + i + '">消す</button></li>';
+    }).join('') + '</ol><div class="row"><button class="small" id="btnRepClear">全部消す</button></div>';
+  }
   function repeatResult() {
-    var m = M(), lines = (m.repeat || '').split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+    var m = M(), lines = repeatLines();
     if (!lines.length) return { html: '', ok: false };
     var A = [], L = [];
     lines.forEach(function (s) {
@@ -642,13 +764,14 @@ ul.check li { margin: 4px 0; }
       if (!isNaN(v[1])) L.push(v[1]);
     });
     var sa = T.stats(A), sl = T.stats(L);
-    function row(lbl, s) {
+    function row(lbl, s, w) {
       if (!s) return '';
-      return '<span>' + lbl + '</span><span>平均 ' + sg(s.mean) + '、ばらつき(標準偏差) ' + fx(s.sd) + '、幅 ' + fx(s.min) + '〜' + fx(s.max) + ' mm</span>';
+      return '<span>' + lbl + '</span><span>平均 ' + dTxt(s.mean, w) + '、ばらつき(標準偏差) ' + fx(s.sd) + ' mm、幅 ' +
+        dTxt(s.min, w).replace(' mm', '') + ' 〜 ' + dTxt(s.max, w) + '</span>';
     }
     var half = Math.max(sa ? (sa.max - sa.min) / 2 : 0, sl ? (sl.max - sl.min) / 2 : 0);
     var ok = half <= m.tol;
-    return { ok: ok, html: '<div class="kv"><span>回数</span><span>' + lines.length + '</span>' + row('前後', sa) + row('横', sl) + '</div>' +
+    return { ok: ok, html: '<div class="kv"><span>回数</span><span>' + lines.length + '</span>' + row('前後', sa, ALONG_W) + row('横', sl, LAT_W) + '</div>' +
       (ok ? '<div class="box ok">平均のまわり ±' + fx(half) + ' mm に収まっている。' +
         (sa || sl ? ' 平均のずれが残っているなら手順6で前後の距離を合わせる。' : '') + '</div>'
         : '<div class="box bad">ばらつきが ±' + fx(half) + ' mm あり、許容範囲を超える。タイヤが不規則に滑っている可能性が高い。' +
@@ -660,8 +783,26 @@ ul.check li { margin: 4px 0; }
     });
     var sl = $('btnSlower');
     if (sl) sl.onclick = function () { var p = M().turns.in45; p.v = Math.round(p.v * 0.95 / 10) * 10; M().checks = {}; goStep(1); };
+    bindMeasure('rp');
+    $('btnRepAdd').onclick = function () {
+      var mm = readMeasure('rp');
+      if (mm.err) { showWarn(mm.err); return; }
+      if (mm.along == null && mm.lat == null) { showWarn('前後か横のずれを入れる'); return; }
+      var m = M(), f = function (x) { return x == null ? '-' : String(x); };
+      m.repeat = repeatLines().concat([f(mm.along) + ' ' + f(mm.lat)]).join('\n');
+      m.tol = num('inTol', m.tol); save(); render();
+    };
+    document.querySelectorAll('[data-repdel]').forEach(function (b) {
+      b.onclick = function () {
+        var m = M(), lines = repeatLines();
+        lines.splice(+b.getAttribute('data-repdel'), 1);
+        m.repeat = lines.join('\n'); save(); render();
+      };
+    });
+    var rc = $('btnRepClear');
+    if (rc) rc.onclick = function () { if (confirm('ばらつきの記録を全部消す？')) { M().repeat = ''; save(); render(); } };
     $('btnRepeat').onclick = function () {
-      var m = M(); m.repeat = $('inRepeat').value; m.tol = num('inTol', m.tol);
+      var m = M(); m.tol = num('inTol', m.tol);
       if (repeatResult().ok) m.done[6] = true;
       save(); render();
     };
@@ -752,6 +893,8 @@ ul.check li { margin: 4px 0; }
   }
   var flashMsg = null;
   function flash(msg, ok) { flashMsg = { msg: msg, ok: ok }; }
+  /* 描き直さずに注意だけ出す(入力中の値を消さない) */
+  function showWarn(msg) { $('flash').innerHTML = '<div class="box warn">' + esc(msg) + '</div>'; }
 
   /* ---------- 描画 ---------- */
   function renderNav() {
@@ -807,7 +950,7 @@ ul.check li { margin: 4px 0; }
       '<span>ピーク加速度</span><span>横 ' + fx(r.aLat) + ' / 前後 ' + fx(r.aLong) + ' / 合成 <b>' + fx(r.aTot) + '</b> m/s²</span>' +
       '<span>グリップの使用率</span><span>' + fx(use * 100, 0) + ' %(基準 ' + fx(ref.a) + ' m/s²: ' + (ref.manual ? '手入力' : '手順で合わせた斜め入り45') + ')' +
       '<div class="bar' + (use > 1 ? ' over' : '') + '"><i style="width:' + Math.min(100, use * 100).toFixed(0) + '%"></i></div></span>' +
-      '<span>終点のずれ</span><span>前後 ' + sg(r.along) + ' / 横 ' + sg(r.lat) + ' mm(k = ' + fx(m.k, 4) + ')</span></div>' +
+      '<span>終点のずれ</span><span>前後 ' + dAlong(r.along) + ' / 横 ' + dLat(r.lat) + '(k = ' + fx(m.k, 4) + ')</span></div>' +
       (use > 1.0005 ? '<div class="box bad">基準の加速度を超えている。滑る可能性が高い。</div>' : '') +
       '<h3>ターン中の速度と加速度</h3>' + chartSVG(r.series, ref.a) +
       '<div class="legend"><span><i style="border-color:var(--ink)"></i>速度 (上段)</span>' +
@@ -862,7 +1005,7 @@ ul.check li { margin: 4px 0; }
       var q = T.solveOffsets(f.turn, C(), f.p, M().k, { st180: f.p.st });
       f.p.st = q.st; f.p.end = q.end;
       var ok = Math.abs(q.latErr) < 0.5;
-      flash(ok ? '理想の線に乗るように前距離・後距離を合わせた' : '180度は横ずれ ' + sg(q.latErr) + ' mm が残る(角速度で合わせる)', ok);
+      flash(ok ? '理想の線に乗るように前距離・後距離を合わせた' : '180度は横ずれ(' + dLat(q.latErr) + ')が残る(角速度で合わせる)', ok);
       save(); render();
     };
     $('freeApply').onclick = function () {
@@ -1002,14 +1145,14 @@ ul.check li { margin: 4px 0; }
     svg.innerHTML = out.join('');
     $('metrics').innerHTML =
       '<div class="metric"><span>ピーク合成加速度</span><b>' + fx(r1.aTot) + '</b><span>m/s²(横 ' + fx(r1.aLat) + ')</span></div>' +
-      '<div class="metric"><span>終点のずれ 前後</span><b>' + sg(r1.along) + '</b><span>mm (k=0: ' + sg(r0.along) + ')</span></div>' +
-      '<div class="metric"><span>終点のずれ 横</span><b>' + sg(r1.lat) + '</b><span>mm (k=0: ' + sg(r0.lat) + ')</span></div>';
+      '<div class="metric"><span>終点のずれ 前後</span><b>' + dShort(r1.along, ALONG_W) + '</b><span>mm (k=0: ' + dAlong(r0.along) + ')</span></div>' +
+      '<div class="metric"><span>終点のずれ 横</span><b>' + dShort(r1.lat, LAT_W) + '</b><span>mm (k=0: ' + dLat(r0.lat) + ')</span></div>';
   }
 
   function renderTable() {
     var m = M(), sel = currentPlotTurn();
     var html = '<tr><th>ターン</th><th>速度 [mm/s]</th><th>最低速度</th><th>最大角速度 [deg/s]</th><th>角加速度 [deg/s²]</th><th>前距離 [mm]</th><th>後距離 [mm]</th>' +
-      '<th>ピーク角速度</th><th>合成加速度 [m/s²]</th><th>ずれ 前後</th><th>ずれ 横</th><th></th></tr>';
+      '<th>ピーク角速度</th><th>合成加速度 [m/s²]</th><th>ずれ 前後 [mm]</th><th>ずれ 横 [mm]</th><th></th></tr>';
     T.TURNS.forEach(function (t) {
       var p = m.turns[t], r = evalTurn(t);
       function inp(key, step) {
@@ -1020,8 +1163,8 @@ ul.check li { margin: 4px 0; }
       html += '<tr data-row="' + t + '"' + (t === sel ? ' class="sel"' : '') + '><td>' + name(t) + '</td>' +
         inp('v', 50) + inp('vMid', 50) + inp('wMax', 25) + inp('wAc', 5000) + inp('st', 0.5) + inp('end', 0.5) +
         '<td>' + fx(r.peak, 0) + '</td><td>' + fx(r.aTot) + '</td>' +
-        '<td style="color:' + (bad ? 'var(--warn)' : 'inherit') + '">' + sg(r.along) + '</td>' +
-        '<td style="color:' + (bad ? 'var(--warn)' : 'inherit') + '">' + sg(r.lat) + '</td>' +
+        '<td style="color:' + (bad ? 'var(--warn)' : 'inherit') + '">' + dShort(r.along, ALONG_W) + '</td>' +
+        '<td style="color:' + (bad ? 'var(--warn)' : 'inherit') + '">' + dShort(r.lat, LAT_W) + '</td>' +
         '<td><button class="small" data-speed="' + t + '" title="滑りがなければ同じ軌跡になるよう角速度・角加速度を換算">速度を換算</button></td></tr>';
     });
     $('turnTable').innerHTML = html;
